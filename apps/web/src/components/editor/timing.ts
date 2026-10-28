@@ -102,7 +102,37 @@ export function contentEndFrame(timeline: Timeline, spans: SceneSpan[]): number 
     for (const cue of list) add(cue?.from + cue?.durationInFrames);
   }
   for (const sfx of timeline.audio.sfx) add(sfx?.atFrame + 1);
+  if (Array.isArray(timeline.layers)) {
+    for (const layer of timeline.layers) add(layer?.from + layer?.durationInFrames);
+  }
   return end;
+}
+
+/**
+ * Xếp làn cho track Layer: layer chồng thời gian nằm ở các làn khác nhau, mỗi
+ * layer vào làn THẤP nhất còn trống tại `from` của nó (xếp theo from, rồi thứ
+ * tự mảng). Thuần và ổn định: cùng dữ liệu luôn ra cùng làn - kéo một layer thì
+ * chỉ layer đó (và layer bị nó chen) đổi làn, không nhảy lung tung.
+ * `items` là [start, end) frame theo đúng thứ tự mảng; trả về làn của từng phần
+ * tử (cùng chỉ số) + tổng số làn (≥ 1).
+ */
+export function packLanes(items: { start: number; end: number }[]): { lanes: number[]; count: number } {
+  const order = items
+    .map((it, index) => ({ index, start: it.start, end: Math.max(it.end, it.start + 1) }))
+    .sort((a, b) => a.start - b.start || a.index - b.index);
+  const laneEnd: number[] = [];
+  const lanes = new Array<number>(items.length).fill(0);
+  for (const it of order) {
+    let lane = laneEnd.findIndex((end) => end <= it.start);
+    if (lane === -1) {
+      lane = laneEnd.length;
+      laneEnd.push(it.end);
+    } else {
+      laneEnd[lane] = it.end;
+    }
+    lanes[it.index] = lane;
+  }
+  return { lanes, count: Math.max(1, laneEnd.length) };
 }
 
 // ---------------------------------------------------------------- frame ↔ px

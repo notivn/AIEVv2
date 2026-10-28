@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Router } from "express";
-import { repoRoot } from "../config.js";
+import { paths, repoRoot } from "../config.js";
 import { extractJson, generateText } from "../aiText.js";
 import {
   briefOf,
@@ -72,10 +72,15 @@ function requireTranscript(id: string): ProjectTranscript {
  * Đường dẫn đọc từ đĩa (meta.output) không tin được - chặn thoát khỏi repo
  * trước khi stat, tránh meta.json bị sửa tay trỏ ra ngoài.
  */
-function existsInRepo(rel: string | null): string | null {
+function existsInRepo(id: string, rel: string | null): string | null {
   if (!rel) return null;
   const abs = path.resolve(repoRoot, rel);
-  if (!abs.startsWith(path.resolve(repoRoot) + path.sep)) return null;
+  // Chỉ outputs/ hoặc thư mục của chính project: "trong repo" vẫn còn .env, data/
+  // (SQLite), assets/voices - output trỏ vào đó là pack khoe ra đường dẫn + mời tải
+  const inside = [paths.outputsDir, projectDirOf(id)].some((root) =>
+    abs.startsWith(path.resolve(root) + path.sep),
+  );
+  if (!inside || toRepoRel(abs).split("/").some((seg) => seg.startsWith("."))) return null;
   return fs.existsSync(abs) ? toRepoRel(abs) : null;
 }
 
@@ -412,14 +417,14 @@ router.post("/:id/publish", async (req, res) => {
   // Phụ đề sinh luôn để "gói xuất bản" là một bộ đầy đủ, không phải bấm 2 lần
   const subs = writeSubtitleFiles(id, transcript);
 
-  const thumbRel = existsInRepo(path.posix.join("video-projects", id, "thumbnail.png"));
+  const thumbRel = existsInRepo(id, toRepoRel(path.join(projectDirOf(id), "thumbnail.png")));
   const pack: PublishPack = {
     generatedAt: nowIso(),
     transcriptRel: transcript.relPath,
     items,
     subtitles: { srt: subs.srtRel, vtt: subs.vttRel },
     thumbnail: thumbRel,
-    output: existsInRepo(normOutput(meta.output)),
+    output: existsInRepo(id, normOutput(meta.output)),
   };
   fs.writeFileSync(publishJsonPathOf(id), JSON.stringify(pack, null, 2) + "\n", "utf8");
 

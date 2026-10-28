@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import type { AutoCutBackground } from "./autoCutMeta.js";
+import { ffmpegSafeArgs, ffprobeSafeArgs, isPlaylistFormat } from "./ffmpegSafe.js";
 import { detectHardware, readRenderSettings } from "./renderSettings.js";
 import { audioCutFade, execFileCaptureAll } from "./util.js";
 
@@ -48,7 +49,7 @@ interface FfprobeJson {
     tags?: Record<string, string>;
     side_data_list?: Array<Record<string, unknown>>;
   }>;
-  format?: { duration?: string };
+  format?: { duration?: string; format_name?: string };
 }
 
 /** "30000/1001" -> 29.97; số thường -> chính nó; hỏng -> 0 */
@@ -79,16 +80,16 @@ function parseRate(raw: string | undefined): number {
 export async function probeVideo(fileAbs: string): Promise<VideoProbe> {
   const { code, stdout, stderr } = await execFileCaptureAll(
     "ffprobe",
-    [
+    ffprobeSafeArgs([
       "-v",
       "error",
       "-show_entries",
       // Gộp một lệnh: stream (kích thước, fps) + side_data (rotation) + tags (rotate cũ) + duration
-      "stream=index,codec_type,width,height,r_frame_rate:stream_side_data=rotation:stream_tags=rotate:format=duration",
+      "stream=index,codec_type,width,height,r_frame_rate:stream_side_data=rotation:stream_tags=rotate:format=duration,format_name",
       "-of",
       "json",
       fileAbs,
-    ],
+    ]),
     { timeoutMs: 30_000 },
   );
   if (code !== 0) {
@@ -102,6 +103,10 @@ export async function probeVideo(fileAbs: string): Promise<VideoProbe> {
     data = JSON.parse(stdout) as FfprobeJson;
   } catch {
     throw new Error(`ffprobe trả về JSON hỏng cho "${path.basename(fileAbs)}"`);
+  }
+  // Playlist HLS/ffconcat đội lốt .mp4: ffmpeg sẽ đi mở file/URL khác - từ chối
+  if (isPlaylistFormat(data.format?.format_name)) {
+    throw new Error(`File "${path.basename(fileAbs)}" là playlist (HLS/concat), không phải video`);
   }
 
   const streams = data.streams ?? [];
@@ -155,7 +160,7 @@ async function grabFrameJpeg(videoAbs: string, atSec: number): Promise<string | 
   const tmp = path.join(os.tmpdir(), `aiev-frame-${randomBytes(6).toString("hex")}.jpg`);
   const { code } = await execFileCaptureAll(
     "ffmpeg",
-    [
+    ffmpegSafeArgs([
       "-y",
       "-v",
       "error",
@@ -171,7 +176,7 @@ async function grabFrameJpeg(videoAbs: string, atSec: number): Promise<string | 
       "-q:v",
       "4",
       tmp,
-    ],
+    ]),
     { timeoutMs: 60_000 },
   );
   if (code !== 0 || !fs.existsSync(tmp) || fs.statSync(tmp).size === 0) {
@@ -586,13 +591,13 @@ export async function runCutReframe(
   },
 ): Promise<ReframeEncoder> {
   try {
-    await runner.exec("ffmpeg", buildReframeArgs(spec));
+    await runner.exec("ffmpeg", ffmpegSafeArgs(buildReframeArgs(spec)));
     return spec.encoder;
   } catch (err) {
     if (spec.encoder !== "nvenc") throw err;
     const message = err instanceof Error ? err.message : String(err);
     runner.log?.(`[warn] Encode bằng NVENC thất bại (${message}) - chạy lại bằng libx264 (CPU).`);
-    await runner.exec("ffmpeg", buildReframeArgs({ ...spec, encoder: "x264" }));
+    await runner.exec("ffmpeg", ffmpegSafeArgs(buildReframeArgs({ ...spec, encoder: "x264" })));
     return "x264";
   }
 }

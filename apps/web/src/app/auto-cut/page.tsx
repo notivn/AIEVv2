@@ -66,6 +66,18 @@ export default function AutoCutPage() {
   useJobEvents((job) => {
     if (!isAutoCutJob(job)) return;
     if (["done", "failed", "canceled"].includes(job.status)) load();
+    // Job xếp hàng rồi mới chạy: lúc đó server mới ghi planning/cutting - nạp
+    // lại một lần, không thì cột trạng thái đứng ở draft/planned suốt lượt chạy
+    else if (
+      job.status === "running" &&
+      sessions?.some(
+        (s) =>
+          s.id === job.projectId &&
+          s.status !== "planning" &&
+          s.status !== "cutting"
+      )
+    )
+      load();
   });
 
   // Lọc tại chỗ theo tên + đường dẫn nguồn - danh sách phiên nằm sẵn trong bộ nhớ

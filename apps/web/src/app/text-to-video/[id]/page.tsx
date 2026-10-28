@@ -56,6 +56,7 @@ import {
   getProject,
   getTextToVideoSession,
   isTextToVideoJob,
+  isVideoProjectJob,
   mediaUrl,
   scriptChars,
   scriptTextToVideo,
@@ -114,7 +115,7 @@ import { VoicePicker } from "@/components/VoicePicker";
 import { BriefFields, DEFAULT_BRIEF } from "@/components/BriefFields";
 // clock() (giây → mm:ss) đã có sẵn ở đây, lib/format.ts chưa có helper tương đương
 import { clock } from "@/components/AutoCutCommon";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, httpUrlOrNull } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 
 /** Gộp nhiều lần gõ phím thành một PATCH - không bắn request mỗi ký tự. */
@@ -281,7 +282,7 @@ function useChildProject(projectId: string | null): ChildProject {
     let alive = true;
     getJobs(50, projectId)
       .then((list) => {
-        if (alive) setJobs(list);
+        if (alive) setJobs(list.filter((j) => isVideoProjectJob(j)));
       })
       .catch(() => {
         // thiếu job cũng không chặn: timeline tự suy từ file đã render
@@ -294,7 +295,7 @@ function useChildProject(projectId: string | null): ChildProject {
   // AI dựng xong thì meta.output mới có - bám cả job lẫn phiên agent để video
   // tự hiện ra, không bắt người dùng F5 đoán lúc nào xong
   useJobEvents((e) => {
-    if (!projectId || e.projectId !== projectId) return;
+    if (!projectId || !isVideoProjectJob(e, projectId)) return;
     setJobs((prev) => {
       const i = prev.findIndex((j) => j.id === e.id);
       if (i < 0) return [...prev, e];
@@ -862,6 +863,8 @@ export default function TextToVideoDetailPage() {
   const running = RUNNING_STATUS.includes(session.status);
   const stage = deriveTtvStage(session);
   const article = session.article;
+  // canonical do trang nguồn tự khai - chỉ thành link khi là http(s)
+  const articleLink = httpUrlOrNull(article?.canonicalUrl);
   const chars = scriptChars(script);
   const estSeconds = estimateScriptSeconds(script);
   const hasSourceText = source.text.trim() !== "" || article !== null;
@@ -1122,15 +1125,15 @@ export default function TextToVideoDetailPage() {
                       {tf("ttv.char-count", { n: article.chars })}
                     </span>
                   </div>
-                  {article.canonicalUrl && (
+                  {articleLink && (
                     <a
-                      href={article.canonicalUrl}
+                      href={articleLink}
                       target="_blank"
                       rel="noreferrer noopener"
                       className="inline-flex max-w-full items-center gap-1 text-meta font-medium text-[var(--primary)] transition-colors duration-150 hover:text-[var(--primary-hover)]"
                     >
                       <ExternalLink size={13} strokeWidth={2} className="shrink-0" />
-                      <span className="truncate">{article.canonicalUrl}</span>
+                      <span className="truncate">{articleLink}</span>
                     </a>
                   )}
                 </Panel>

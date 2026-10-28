@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getProject, uploadOrigin } from "@/lib/api";
+import { ApiError, getProject, uploadOrigin } from "@/lib/api";
 import { Banner } from "@/components/Banner";
 import { Button } from "@/components/Button";
 import { ProgressBar } from "@/components/ProgressBar";
@@ -116,6 +116,7 @@ export default function MobileUploadPage() {
 
   const [projectName, setProjectName] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [expired, setExpired] = useState(false);
   const [items, setItems] = useState<UploadItem[]>([]);
 
   const pickRef = useRef<HTMLInputElement>(null);
@@ -130,8 +131,12 @@ export default function MobileUploadPage() {
       .then((p) => {
         if (alive) setProjectName(p.name);
       })
-      .catch(() => {
-        if (alive) setNotFound(true);
+      .catch((e: unknown) => {
+        if (!alive) return;
+        // 401 = token QR đã bị thu hồi/hết hạn (đóng modal, quá 60 phút, server
+        // khởi động lại) - project vẫn còn, báo "không tìm thấy" là chỉ sai chỗ
+        if (e instanceof ApiError && e.status === 401) setExpired(true);
+        setNotFound(true);
       });
     return () => {
       alive = false;
@@ -201,7 +206,7 @@ export default function MobileUploadPage() {
       </header>
 
       {notFound ? (
-        <Banner tone="danger" message={t("m.not-found")} />
+        <Banner tone="danger" message={t(expired ? "m.expired" : "m.not-found")} />
       ) : (
         <>
           {/* Nút to chọn file từ thư viện ảnh/video */}

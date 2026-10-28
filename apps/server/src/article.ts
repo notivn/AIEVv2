@@ -47,12 +47,17 @@ function textOrNull(s: string | null | undefined): string | null {
   return t ? t : null;
 }
 
-/** Giải link tương đối về tuyệt đối; trả null nếu không giải được hoặc là data: URI */
+/**
+ * Giải link tương đối về tuyệt đối. CHỈ trả http/https - trang lạ có thể đặt
+ * canonical/og:image là javascript:, vbscript:, file:, data:... mà link này đi
+ * thẳng vào prompt của agent và vào href trên web, nên mọi scheme khác → null.
+ */
 function absUrl(raw: string | null | undefined, baseUrl: string): string | null {
   const v = (raw || "").trim();
-  if (!v || /^data:/i.test(v)) return null;
+  if (!v) return null;
   try {
-    return new URL(v, baseUrl).href;
+    const u = new URL(v, baseUrl);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
   } catch {
     return null;
   }

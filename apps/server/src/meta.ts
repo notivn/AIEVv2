@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { TrimAggressiveness } from "./autoTrim.js";
 import { paths } from "./config.js";
+import { defaultVoice, normTtsSpeed, type TextToVideoVoice } from "./textToVideoMeta.js";
+import { isTtsEngine } from "./ttsTypes.js";
 import { IMAGE_TEXT_POSITIONS, type ImageTextPosition } from "./imageMeta.js";
 import { videoStyleExists } from "./videoStyles.js";
 import {
@@ -72,7 +74,87 @@ const AUTO_CUT_LEVEL_TABLE: Record<TrimAggressiveness, true> = {
 
 export const AUTO_CUT_LEVELS = Object.keys(AUTO_CUT_LEVEL_TABLE) as TrimAggressiveness[];
 
+/**
+ * Chế độ hoàn tất của phiên AI edit (docs/EDITOR-V2-PLAN.md mục 3):
+ * - "draft" (MẶC ĐỊNH) = AI dựng tới bản draft đã QC rồi DỪNG để người dùng duyệt
+ *   / chỉnh trong trình chỉnh sửa, KHÔNG render final.
+ * - "final" = AI làm trọn tới video final (hành vi cũ).
+ */
+export type FinishMode = "draft" | "final";
+
+export const FINISH_MODES: FinishMode[] = ["draft", "final"];
+
+/**
+ * Video dựng từ đâu (cột "Nguồn" của trang project):
+ * - video   = edit file người dùng tải lên assets (footage/âm thanh/ảnh) - hành vi cũ
+ * - article = KHÔNG có footage: kể lại một bài viết (link) thành video motion graphics
+ * - request = KHÔNG có footage: dựng video motion graphics theo yêu cầu bằng chữ
+ */
+export type SourceKind = "video" | "article" | "request";
+export const SOURCE_KINDS: readonly SourceKind[] = ["video", "article", "request"];
+/** Nội dung bài viết đã bóc từ `sourceUrl` - agent đọc file này, người dùng xem trước được */
+export const SOURCE_ARTICLE_REL = "assets/source-article.md";
+export const SOURCE_TEXT_MAX = 20_000;
+
+/**
+ * Lồng tiếng cho video không có footage (nguồn article/request):
+ * - none = không giọng đọc
+ * - tts  = AI viết kịch bản, server đọc bằng ĐÚNG giọng `narrationVoice` (AI không tự chọn giọng)
+ * - file = giọng thu sẵn người dùng tải lên (`narrationFile`) là xương sống thời gian
+ * Cả hai chế độ có giọng đều đi qua POST /api/projects/:id/narration (routes/narration.ts).
+ */
+export type NarrationMode = "none" | "tts" | "file";
+export const NARRATION_MODES: readonly NarrationMode[] = ["none", "tts", "file"];
+
+/** Giọng đọc từ JSON thô (meta trên đĩa / body PUT) - field thiếu/sai lấy từ `base` */
+export function normNarrationVoice(raw: unknown, base: TextToVideoVoice = defaultVoice()): TextToVideoVoice {
+  const v = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  return {
+    engine: isTtsEngine(v.engine) ? v.engine : base.engine,
+    model: v.model === null ? null : typeof v.model === "string" && v.model.trim() ? v.model.trim() : base.model,
+    name: typeof v.name === "string" && v.name.trim() ? v.name.trim() : base.name,
+    style: typeof v.style === "string" ? v.style : base.style,
+    language: typeof v.language === "string" && v.language.trim() ? v.language.trim() : base.language,
+    speed: "speed" in v ? normTtsSpeed(v.speed) : base.speed,
+  };
+}
+
+/**
+ * relPath hợp lệ của một file trong assets/ (chặn traversal). Cấm thêm `:`
+ * (ổ đĩa / luồng dữ liệu NTFS kiểu `x.mp3:ads`), NUL và đoạn rỗng/ẩn (`.env`, `..`).
+ */
+export function isAssetRelPath(rel: string): boolean {
+  if (!/^assets\/[^\\:\0]+$/.test(rel)) return false;
+  return !rel.split("/").some((seg) => !seg || seg.startsWith("."));
+}
+
+/**
+ * brief.skill đi thẳng vào prompt dạng `.claude/skills/<skill>/SKILL.md` - chỉ nhận
+ * tên kebab-case như thư mục skill thật, không thì chuỗi kiểu `../../.env` hay có
+ * xuống dòng là chèn được chỉ thị vào phần LỆNH của prompt.
+ */
+function isSkillName(v: string): boolean {
+  return v.length <= 100 && isKebabCase(v);
+}
+
+/** illustrationModel cũng in vào prompt - cùng luật id với parseImageModel (routes/images.ts) */
+function isModelId(v: string): boolean {
+  return /^[a-z0-9][a-z0-9.-]{2,80}$/i.test(v);
+}
+
 export interface Brief {
+  /** Video dựng từ đâu - xem SourceKind */
+  sourceKind: SourceKind;
+  /** Link bài viết (sourceKind "article") - bản bóc nằm ở SOURCE_ARTICLE_REL */
+  sourceUrl: string;
+  /** Yêu cầu / nội dung bằng chữ (sourceKind "request") */
+  sourceText: string;
+  /** Lồng tiếng (chỉ có nghĩa với nguồn article/request) - xem NarrationMode */
+  narrationMode: NarrationMode;
+  /** Giọng AI đọc khi narrationMode = "tts" */
+  narrationVoice: TextToVideoVoice;
+  /** File giọng thu sẵn (relPath trong project, "assets/...") khi narrationMode = "file" */
+  narrationFile: string;
   /** Mô tả nội dung video gốc - bối cảnh cho AI */
   sourceDescription: string;
   /** Có tự động cắt bỏ đoạn thừa, khoảng lặng không */
@@ -139,12 +221,20 @@ export interface Brief {
    * chồng lên nhau chứ không thay thế nhau.
    */
   videoStyleId: string | null;
+  /** AI dừng ở draft để người dùng duyệt ("draft", mặc định) hay làm trọn tới final - xem FinishMode */
+  finishMode: FinishMode;
   /** Ghi chú tự do cho AI */
   notes: string;
 }
 
 export function defaultBrief(): Brief {
   return {
+    sourceKind: "video",
+    sourceUrl: "",
+    sourceText: "",
+    narrationMode: "none",
+    narrationVoice: defaultVoice(),
+    narrationFile: "",
     sourceDescription: "",
     autoCut: true,
     autoCutLevel: "default",
@@ -165,6 +255,7 @@ export function defaultBrief(): Brief {
     styleId: null,
     videoStyleEnabled: false,
     videoStyleId: null,
+    finishMode: "draft",
     notes: "",
   };
 }
@@ -187,6 +278,14 @@ export function briefOf(meta: ProjectMeta): Brief {
   const raw = meta.brief as unknown; // meta đọc từ đĩa - không tin kiểu
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base;
   const b = raw as Record<string, unknown>;
+  if (SOURCE_KINDS.includes(b.sourceKind as SourceKind)) base.sourceKind = b.sourceKind as SourceKind;
+  if (typeof b.sourceUrl === "string") base.sourceUrl = b.sourceUrl.trim();
+  if (typeof b.sourceText === "string") base.sourceText = b.sourceText;
+  if (NARRATION_MODES.includes(b.narrationMode as NarrationMode)) {
+    base.narrationMode = b.narrationMode as NarrationMode;
+  }
+  base.narrationVoice = normNarrationVoice(b.narrationVoice);
+  if (typeof b.narrationFile === "string" && isAssetRelPath(b.narrationFile)) base.narrationFile = b.narrationFile;
   if (typeof b.sourceDescription === "string") base.sourceDescription = b.sourceDescription;
   if (typeof b.autoCut === "boolean") base.autoCut = b.autoCut;
   if (AUTO_CUT_LEVELS.includes(b.autoCutLevel as TrimAggressiveness)) {
@@ -204,11 +303,11 @@ export function briefOf(meta: ProjectMeta): Brief {
   if (Array.isArray(b.relatedKeys)) {
     base.relatedKeys = b.relatedKeys.filter((k): k is string => typeof k === "string");
   }
-  if (typeof b.skill === "string" && b.skill.trim()) base.skill = b.skill.trim();
+  if (typeof b.skill === "string" && isSkillName(b.skill.trim())) base.skill = b.skill.trim();
   if (SFX_MODES.includes(b.sfxMode as SfxMode)) base.sfxMode = b.sfxMode as SfxMode;
   if (MUSIC_MODES.includes(b.musicMode as MusicMode)) base.musicMode = b.musicMode as MusicMode;
   if (typeof b.autoIllustrations === "boolean") base.autoIllustrations = b.autoIllustrations;
-  if (typeof b.illustrationModel === "string" && b.illustrationModel.trim()) {
+  if (typeof b.illustrationModel === "string" && isModelId(b.illustrationModel.trim())) {
     base.illustrationModel = b.illustrationModel.trim();
   }
   if (typeof b.illustrationText === "boolean") base.illustrationText = b.illustrationText;
@@ -235,6 +334,7 @@ export function briefOf(meta: ProjectMeta): Brief {
   // PHẢI đứng SAU khối videoStyleId ở trên vì nó đọc kết quả của khối đó.
   if (typeof b.videoStyleEnabled === "boolean") base.videoStyleEnabled = b.videoStyleEnabled;
   else base.videoStyleEnabled = base.videoStyleId !== null;
+  if (FINISH_MODES.includes(b.finishMode as FinishMode)) base.finishMode = b.finishMode as FinishMode;
   if (typeof b.notes === "string") base.notes = b.notes;
   return base;
 }
@@ -292,6 +392,31 @@ export function applyBriefPatch(
   };
 
   str("sourceDescription");
+  if ("sourceKind" in body && !SOURCE_KINDS.includes(body.sourceKind as SourceKind)) {
+    bad(`sourceKind phải là một trong: ${SOURCE_KINDS.join(" | ")}`);
+  }
+  if ("sourceKind" in body) brief.sourceKind = body.sourceKind as SourceKind;
+  str("sourceUrl", true);
+  if (brief.sourceUrl && !/^https?:\/\//i.test(brief.sourceUrl)) bad("sourceUrl phải bắt đầu bằng http:// hoặc https://");
+  str("sourceText");
+  if (brief.sourceText.length > SOURCE_TEXT_MAX) bad(`sourceText tối đa ${SOURCE_TEXT_MAX} ký tự`);
+  if ("narrationMode" in body && !NARRATION_MODES.includes(body.narrationMode as NarrationMode)) {
+    bad(`narrationMode phải là một trong: ${NARRATION_MODES.join(" | ")}`);
+  }
+  if ("narrationMode" in body) brief.narrationMode = body.narrationMode as NarrationMode;
+  if ("narrationVoice" in body) {
+    const v = body.narrationVoice;
+    if (!v || typeof v !== "object" || Array.isArray(v)) bad("narrationVoice phải là object");
+    if ("engine" in (v as object) && !isTtsEngine((v as Record<string, unknown>).engine)) {
+      bad("narrationVoice.engine không hợp lệ");
+    }
+    // Partial: chỉ field gửi lên đổi, còn lại giữ giọng đang chọn
+    brief.narrationVoice = normNarrationVoice(v, brief.narrationVoice);
+  }
+  str("narrationFile", true);
+  if (brief.narrationFile && !isAssetRelPath(brief.narrationFile)) {
+    bad('narrationFile phải là file trong assets/ của project (vd "assets/giong-doc.mp3")');
+  }
   bool("autoCut");
   bool("subtitles");
   bool("highlightEnabled");
@@ -299,9 +424,11 @@ export function applyBriefPatch(
   bool("keyLayoutEnabled");
   str("mainKey", true);
   strList("relatedKeys");
-  nullableStr("skill");
+  const skill = nullableStr("skill");
+  if (skill && !isSkillName(skill)) bad("skill phải là tên skill kebab-case (vd: noti-tiktok-vn)");
   bool("autoIllustrations");
-  nullableStr("illustrationModel");
+  const illustrationModel = nullableStr("illustrationModel");
+  if (illustrationModel && !isModelId(illustrationModel)) bad("illustrationModel không hợp lệ");
   bool("illustrationText");
   str("notes");
 
@@ -340,6 +467,11 @@ export function applyBriefPatch(
     bad(`musicMode phải là một trong: ${MUSIC_MODES.join(" | ")}`);
   }
   if ("musicMode" in body) brief.musicMode = body.musicMode as MusicMode;
+
+  if ("finishMode" in body && !FINISH_MODES.includes(body.finishMode as FinishMode)) {
+    bad(`finishMode phải là một trong: ${FINISH_MODES.join(" | ")}`);
+  }
+  if ("finishMode" in body) brief.finishMode = body.finishMode as FinishMode;
 
   const styleId = nullableStr("styleId");
   if (styleId && checkStyle && !checkStyle(styleId)) {
@@ -517,8 +649,11 @@ export interface AssetEntry {
 export function readAssetEntries(id: string): Record<string, AssetEntry> {
   try {
     const raw = JSON.parse(fs.readFileSync(assetsJsonPathOf(id), "utf8")) as unknown;
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    const out: Record<string, AssetEntry> = {};
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return Object.create(null);
+    // Object KHÔNG prototype: khóa là TÊN FILE do request quyết định - với object
+    // thường, map["__proto__"] trả về Object.prototype và writeAssetEntry gán
+    // colorGrade/colorAdjust thẳng lên đó (prototype pollution toàn tiến trình)
+    const out: Record<string, AssetEntry> = Object.create(null);
     for (const [file, entry] of Object.entries(raw as Record<string, unknown>)) {
       if (!entry || typeof entry !== "object") continue;
       const e = entry as Record<string, unknown>;
@@ -532,7 +667,7 @@ export function readAssetEntries(id: string): Record<string, AssetEntry> {
     }
     return out;
   } catch {
-    return {};
+    return Object.create(null);
   }
 }
 

@@ -101,7 +101,9 @@ fi
 echo "[STEP] stop"
 printf '  \033[36m-> Dừng hệ thống đang chạy...\033[0m\n'
 for port in 6868 6869; do
-  lsof -ti tcp:$port 2>/dev/null | xargs kill -9 2>/dev/null || true
+  # -sTCP:LISTEN: chỉ tiến trình ĐANG NGHE cổng. Thiếu nó thì lsof trả cả tiến
+  # trình đang NỐI TỚI cổng - trình duyệt đang mở dashboard bị kill -9 theo.
+  lsof -ti tcp:$port -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
 done
 
 # 3. Cài dependencies mới (nếu có)

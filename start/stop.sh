@@ -5,7 +5,8 @@ set -u
 echo "  Đang dừng AI Edit Video..."
 STOPPED=false
 for port in 6868 6869; do
-  PIDS="$(lsof -ti tcp:$port 2>/dev/null || true)"
+  # -sTCP:LISTEN: chỉ tiến trình đang nghe cổng, không phải trình duyệt đang nối tới nó
+  PIDS="$(lsof -ti tcp:$port -sTCP:LISTEN 2>/dev/null || true)"
   if [ -n "$PIDS" ]; then
     echo "$PIDS" | xargs kill -9 2>/dev/null || true
     echo "  [OK] Đã dừng process trên port $port"

@@ -1,0 +1,6 @@
+{
+  "name": "gemini-watermark-remover-vendored",
+  "private": true,
+  "type": "module",
+  "sideEffects": false
+}

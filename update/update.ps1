@@ -113,9 +113,13 @@ if ($restored -gt 0) {
 Write-Host "[STEP] stop"
 Write-Host "  -> Dừng hệ thống đang chạy..." -ForegroundColor Cyan
 foreach ($port in 6868, 6869) {
+    # `2>$null` trên lệnh ngoài + ErrorActionPreference=Stop: PowerShell 5.1 biến
+    # MỌI dòng stderr của taskkill (tiến trình con đã tự thoát, Access denied...)
+    # thành lỗi chặn - script chết ngay bước stop, không cài, không khởi động lại.
+    # Hạ về Continue trong scope con để stderr chỉ bị bỏ đi.
     Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
         Select-Object -ExpandProperty OwningProcess -Unique |
-        ForEach-Object { taskkill /pid $_ /t /f 2>$null | Out-Null }
+        ForEach-Object { & { $ErrorActionPreference = "Continue"; taskkill /pid $_ /t /f 2>$null | Out-Null } }
 }
 
 # 3. Cài dependencies mới (nếu có)

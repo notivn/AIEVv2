@@ -143,6 +143,10 @@ async function fetchAllowed(url: string, accept: string): Promise<Response> {
 }
 
 async function readCapped(res: Response): Promise<Buffer> {
+  // Báo trước quá trần thì khỏi tải cả cục vào RAM
+  if (Number(res.headers.get("content-length") || 0) > MAX_LOGO_BYTES) {
+    throw new HttpError(502, "LOGO_TOO_LARGE", `File logo lớn hơn ${MAX_LOGO_BYTES} bytes`);
+  }
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > MAX_LOGO_BYTES) {
     throw new HttpError(502, "LOGO_TOO_LARGE", `File logo lớn hơn ${MAX_LOGO_BYTES} bytes`);
@@ -170,6 +174,23 @@ export function sanitizeSvg(svg: string): string {
     .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"')
     // tham chiếu ra ngoài: logo phải tự chứa, không được gọi mạng lúc render
     .replace(/(href|src)\s*=\s*(["'])\s*https?:\/\/[^"']*\2/gi, '$1="#"');
+}
+
+/**
+ * Lọc bằng regex ở trên không bao giờ kín: `<svg:script>` có tiền tố namespace,
+ * `href="&#106;avascript:..."` mã hóa thực thể, `<set attributeName="onload">`,
+ * `@import url(...)`... đều lọt. Nên sau khi lọc còn soi lại - còn dấu hiệu
+ * chạy được hay gọi ra ngoài là BỎ CẢ FILE (coi như nguồn này không có logo),
+ * không cố cứu. Logo thật trên Simple Icons/Commons không bao giờ cần mấy thứ này.
+ */
+export function svgLooksDangerous(svg: string): boolean {
+  const decoded = svg
+    .replace(/&#x([0-9a-f]+);?/gi, (_m, h: string) => String.fromCodePoint(parseInt(h, 16) || 32))
+    .replace(/&#(\d+);?/g, (_m, d: string) => String.fromCodePoint(Number(d) || 32))
+    .replace(/[\u0000- ]+/g, " ");
+  return /<\s*([\w-]+:)?(script|foreignobject|iframe|object|embed|handler|listener)\b|<!entity|\son[a-z]+\s*=|javascript\s*:|vbscript\s*:|data\s*:\s*text\/html|@import|url\s*\(\s*["']?\s*(https?:|\/\/)|(href|src)\s*=\s*["']?\s*(https?:|\/\/)|<\s*([\w-]+:)?(set|animate\w*)\b[^>]*attributename\s*=\s*["']?\s*(on|href|xlink:href)/i.test(
+    decoded,
+  );
 }
 
 interface Downloaded {
@@ -219,6 +240,7 @@ async function fromSimpleIcons(name: string): Promise<(Downloaded & { title: str
   if (!res.ok) return null;
   const buf = await readCapped(res);
   if (!buf.toString("utf8").includes("<svg")) return null;
+  if (svgLooksDangerous(sanitizeSvg(buf.toString("utf8")))) return null;
   return {
     buf,
     ext: ".svg",
@@ -300,6 +322,9 @@ async function fromWikidata(name: string): Promise<(Downloaded & { title: string
     if (!fileRes.ok) continue;
     const buf = await readCapped(fileRes);
     if (ext === ".svg" && !buf.toString("utf8").includes("<svg")) continue;
+    if (ext === ".svg" && svgLooksDangerous(sanitizeSvg(buf.toString("utf8")))) continue;
+    // PNG phải đúng là PNG (magic bytes) - Commons trả HTML lỗi thì đừng lưu thành .png
+    if (ext === ".png" && !buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) continue;
     return {
       buf,
       ext,

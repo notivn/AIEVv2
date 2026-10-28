@@ -30,17 +30,25 @@ import type {
   TimelineZoom,
   TimelineZoomKey,
   TimelineCaptionWord,
+  TimelineCueTransform,
 } from "@/lib/api";
-import { sceneDurationFrames } from "./timing";
+import { SPEED_MAX, SPEED_MIN, sceneSpeedOf as engineSceneSpeedOf } from "@engine/duration";
+import { CUE_SCALE_MAX, CUE_SCALE_MIN } from "@engine/manifest";
+import { keyframeValue, type LayerKeyframe as EngineLayerKeyframe } from "@engine/layerGeometry";
+import { effectiveOverlap, sceneDurationFrames } from "./timing";
 
 // ================================================================ kiểu chung
 
 export type CueKind = "captions" | "subtitles" | "overlays";
 export type CueSelKind = "caption" | "subtitle" | "overlay";
 
-/** Phần tử đang chọn. Scene theo `id` (đổi thứ tự không lạc), phần còn lại theo chỉ số. */
+/**
+ * Phần tử đang chọn. Scene và layer theo `id` (đổi thứ tự / đổi lớp không lạc),
+ * phần còn lại theo chỉ số.
+ */
 export type Selection =
   | { kind: "scene"; id: string }
+  | { kind: "layer"; id: string }
   | { kind: CueSelKind; index: number }
   | { kind: "sfx"; index: number }
   | { kind: "music" }
@@ -58,7 +66,7 @@ export const isCueSel = (kind: Selection["kind"]): kind is CueSelKind =>
 export const sameSelection = (a: Selection | null, b: Selection | null): boolean => {
   if (a === b) return true;
   if (!a || !b || a.kind !== b.kind) return false;
-  if (a.kind === "scene" && b.kind === "scene") return a.id === b.id;
+  if ("id" in a && "id" in b) return a.id === b.id;
   if ("index" in a && "index" in b) return a.index === b.index;
   return true;
 };
@@ -196,7 +204,27 @@ export function sceneMaxFrames(scene: TimelineScene, ctx: OpsContext): number | 
   return sec === null ? null : Math.max(1, Math.floor(sec * ctx.fps + 1e-6));
 }
 
-/** Khung [inFrame, outFrame) trong file footage - null nếu chưa đủ dữ liệu. */
+/** Giới hạn tốc độ phát footage (docs/EDITOR-V2-PLAN.md mục 1.1) - nguồn: @engine/duration. */
+export { SPEED_MAX, SPEED_MIN };
+
+/**
+ * Tốc độ phát hiệu lực của scene footage - ĐÚNG hàm của engine (vắng/sai kiểu/
+ * ngoài khoảng = 1). Thời lượng trên timeline = (to - from) / speed, nên
+ * trim/tách đổi frame TIMELINE ra frame FILE bằng hệ số này.
+ */
+export const sceneSpeedOf = (scene: TimelineScene): number =>
+  engineSceneSpeedOf(scene as { speed?: unknown });
+
+/** frame timeline → frame trong file footage (theo tốc độ). */
+const toFileFrames = (frames: number, speed: number): number => Math.round(frames * speed);
+/**
+ * Độ dài trên timeline của đoạn [in, out) frame file - cùng công thức với
+ * `footageDurationFrames` của engine (làm tròn từng đầu trước, rồi chia tốc độ).
+ */
+const toTimelineFrames = (fileFrames: number, speed: number): number =>
+  Math.max(1, Math.round(fileFrames / speed));
+
+/** Khung [inFrame, outFrame) trong file footage (frame FILE) - null nếu chưa đủ dữ liệu. */
 export function footageWindow(
   scene: TimelineScene,
   fps: number,
@@ -205,7 +233,7 @@ export function footageWindow(
   const inFrame = Math.round((scene.from ?? 0) * fps);
   if (typeof scene.to === "number") return { inFrame, outFrame: Math.round(scene.to * fps) };
   if (typeof scene.durationInFrames === "number") {
-    return { inFrame, outFrame: inFrame + scene.durationInFrames };
+    return { inFrame, outFrame: inFrame + toFileFrames(scene.durationInFrames, sceneSpeedOf(scene)) };
   }
   return null;
 }
@@ -283,10 +311,14 @@ function trimSceneRaw(
     const mediaSec = scene.srcVideo ? ctx.mediaDurationSec(scene.srcVideo) : null;
     const mediaFrames =
       mediaSec === null ? Number.POSITIVE_INFINITY : Math.floor(mediaSec * fps + 1e-6);
+    // Kéo d frame TIMELINE = d × tốc độ frame trong FILE (tua nhanh 2x: kéo 1 frame ăn 2 frame file)
+    const speed = sceneSpeedOf(scene);
+    const fd = toFileFrames(d, speed);
+    if (fd === 0) return tl;
     let { inFrame, outFrame } = win;
     const patch: Partial<TimelineScene> = {};
     if (edge === "start") {
-      inFrame = clampInt(inFrame + d, 0, outFrame - 1);
+      inFrame = clampInt(inFrame + fd, 0, outFrame - 1);
       if (inFrame === win.inFrame) return tl;
       patch.from = frameToSec(inFrame, fps);
       // Chưa có `to` (độ dài lấy từ durationInFrames) thì ghi `to` cũ để mép cuối đứng yên
@@ -294,12 +326,12 @@ function trimSceneRaw(
     } else {
       // Đã dài quá file sẵn (dữ liệu cũ) thì không cho dài thêm, nhưng vẫn cho co lại
       const upper = Math.max(outFrame, mediaFrames);
-      outFrame = clampInt(outFrame + d, inFrame + 1, upper);
+      outFrame = clampInt(outFrame + fd, inFrame + 1, upper);
       if (outFrame === win.outFrame) return tl;
       patch.to = frameToSec(outFrame, fps);
       if (typeof scene.from !== "number") patch.from = 0;
     }
-    if (typeof scene.durationInFrames === "number") patch.durationInFrames = outFrame - inFrame;
+    if (typeof scene.durationInFrames === "number") patch.durationInFrames = toTimelineFrames(outFrame - inFrame, speed);
     return { ...tl, scenes: replaceAt(tl.scenes, index, applyPatch(scene, patch)) };
   }
 
@@ -457,6 +489,36 @@ export function canSplitScene(scene: TimelineScene, fps: number): boolean {
 }
 
 /**
+ * Điểm cắt (frame FILE) khi tách footage tại `cut` frame TIMELINE.
+ * speed = 1: đúng `cut`. Khác 1: thử các frame file quanh cut × speed, chọn cái
+ * cho nửa đầu (round(a / speed), cùng công thức engine) gần `cut` nhất mà nửa
+ * sau vẫn đủ hình cho phần còn lại (`duration - nửa đầu`; OffthreadVideo của
+ * Remotion phát (endAt - startFrom) / speed frame timeline) - không thì đuôi nửa sau đen.
+ * Trả `cut` thực dùng để zoom và độ dài cắt cùng một frame.
+ */
+function footageCutPoint(
+  win: { inFrame: number; outFrame: number },
+  cut: number,
+  duration: number,
+  speed: number,
+): { cutFrame: number; cut: number } | null {
+  const span = win.outFrame - win.inFrame;
+  if (speed === 1) return cut > 0 && cut < span ? { cutFrame: win.inFrame + cut, cut } : null;
+  const lo = Math.max(1, Math.floor((cut - 1) * speed) - 1);
+  const hi = Math.min(span - 1, Math.ceil((cut + 1) * speed) + 1);
+  let best: { rel: number; first: number; score: number } | null = null;
+  for (let rel = lo; rel <= hi; rel += 1) {
+    const firstDur = toTimelineFrames(rel, speed);
+    const secondDur = duration - firstDur;
+    if (secondDur <= 0) continue;
+    const covered = Math.ceil((span - rel) / speed) >= secondDur;
+    const score = Math.abs(firstDur - cut) + (covered ? 0 : duration);
+    if (!best || score < best.score) best = { rel, first: firstDur, score };
+  }
+  return best ? { cutFrame: win.inFrame + best.rel, cut: best.first } : null;
+}
+
+/**
  * Tách scene tại `offset` frame tính từ đầu scene. Nửa đầu giữ id cũ, nửa sau
  * nhận `newId`. Cả hai mang đủ field lạ; zoom được cắt liền mạch tại điểm tách;
  * nửa đầu cắt thẳng (overlap 0), nửa sau giữ chuyển cảnh cũ sang scene kế.
@@ -472,7 +534,7 @@ export function splitSceneAt(
   if (!scene || !canSplitScene(scene, ctx.fps)) return tl;
   if (!newId || tl.scenes.some((s) => s.id === newId)) return tl;
   const duration = sceneDurationFrames(scene, ctx.fps);
-  const cut = Math.round(offset);
+  let cut = Math.round(offset);
   if (duration === null || cut <= 0 || cut >= duration) return tl;
 
   const first: TimelineScene = { ...scene };
@@ -481,7 +543,13 @@ export function splitSceneAt(
   if (sceneKind(scene) === "footage") {
     const win = footageWindow(scene, ctx.fps);
     if (!win) return tl;
-    const cutFrame = win.inFrame + cut;
+    const speed = sceneSpeedOf(scene);
+    // `cut` là frame TIMELINE; điểm cắt trong file chọn qua tốc độ phát, và
+    // `cut` có thể nhích tới frame gần nhất cắt được (tua chậm: 1 frame file = nhiều frame timeline)
+    const point = footageCutPoint(win, cut, duration, speed);
+    if (!point) return tl;
+    cut = point.cut;
+    const cutFrame = point.cutFrame;
     first.from = frameToSec(win.inFrame, ctx.fps);
     first.to = frameToSec(cutFrame, ctx.fps);
     second.from = first.to;
@@ -492,11 +560,24 @@ export function splitSceneAt(
     if (typeof scene.durationInFrames === "number") {
       first.durationInFrames = cut;
       second.durationInFrames = duration - cut;
+    } else if (toTimelineFrames(win.outFrame - cutFrame, speed) !== duration - cut) {
+      // Hai nửa phải cộng lại ĐÚNG độ dài cũ: lệch một frame là mọi scene phía
+      // sau trượt khỏi phụ đề/sfx/layer (frame tuyệt đối). Làm tròn (to-from)/speed
+      // từng nửa có thể lệch 1 → chốt độ dài nửa sau bằng durationInFrames.
+      second.durationInFrames = duration - cut;
     }
   } else {
     first.durationInFrames = cut;
     second.durationInFrames = duration - cut;
   }
+
+  // Điểm tách rơi vào vùng chuyển cảnh (transitionOverlap) với scene trước/sau:
+  // nửa nằm trong vùng đó ngắn hơn độ chồng → phép kẹp overlap (trình phát,
+  // assemble) co độ chồng lại → mọi scene phía sau trượt khỏi phụ đề/sfx/layer
+  // (frame tuyệt đối). Không tách ở đó.
+  const overlapIn = index > 0 ? effectiveOverlap(tl.scenes, index - 1, ctx.fps) : 0;
+  const overlapOut = index < tl.scenes.length - 1 ? effectiveOverlap(tl.scenes, index, ctx.fps) : 0;
+  if (cut < overlapIn || duration - cut < overlapOut) return tl;
 
   if (scene.zoom && Array.isArray(scene.zoom.keys) && scene.zoom.keys.length > 0) {
     const [z1, z2] = splitZoom(scene.zoom, cut, duration - cut);
@@ -510,7 +591,13 @@ export function splitSceneAt(
   return { ...tl, scenes };
 }
 
-export function patchScene(tl: Timeline, index: number, patch: Partial<TimelineScene>): Timeline {
+/**
+ * Patch NÔNG một scene - theo `id` (hợp đồng v2: inspector/canvas gọi theo id)
+ * hoặc theo chỉ số (nơi gọi cũ). Object lồng (transform, color, crop…) được
+ * THAY NGUYÊN: nơi gọi tự spread giá trị cũ.
+ */
+export function patchScene(tl: Timeline, idOrIndex: string | number, patch: Partial<TimelineScene>): Timeline {
+  const index = typeof idOrIndex === "number" ? idOrIndex : sceneIndexById(tl, idOrIndex);
   const scene = tl.scenes[index];
   if (!scene) return tl;
   const next = applyPatch(scene, patch);
@@ -535,7 +622,32 @@ export function setFootageWindow(
     from: frameToSec(a, ctx.fps),
     to: frameToSec(b, ctx.fps),
   };
-  if (typeof scene.durationInFrames === "number") patch.durationInFrames = b - a;
+  // in/out là frame FILE; durationInFrames (nếu có) là frame TIMELINE - qua tốc độ
+  if (typeof scene.durationInFrames === "number") patch.durationInFrames = toTimelineFrames(b - a, sceneSpeedOf(scene));
+  return withPunchInRetimed(tl, patchScene(tl, index, patch), index, ctx.fps);
+}
+
+/**
+ * Đổi tốc độ phát scene footage (1 = xóa khóa). Engine ƯU TIÊN `durationInFrames`
+ * và bỏ qua `speed` khi tính độ dài, nên scene có sẵn durationInFrames phải tính
+ * lại cùng lúc = (out - in) / tốc độ mới - không thì Sequence giữ độ dài cũ
+ * trong khi video kết thúc sớm (tua nhanh → đuôi đen) hoặc bị cắt (tua chậm).
+ * Chưa có `to` (độ dài đang lấy từ durationInFrames × tốc độ cũ) thì chốt `to`
+ * từ khung hiện tại trước, để đoạn file đã chọn đứng yên.
+ */
+export function setSceneSpeed(tl: Timeline, index: number, speed: number, ctx: OpsContext): Timeline {
+  const scene = tl.scenes[index];
+  if (!scene || sceneKind(scene) !== "footage" || !Number.isFinite(speed)) return tl;
+  const v = Math.min(SPEED_MAX, Math.max(SPEED_MIN, speed));
+  const patch: Partial<TimelineScene> = { speed: v === 1 ? undefined : v };
+  if (typeof scene.durationInFrames === "number") {
+    const win = footageWindow(scene, ctx.fps);
+    if (win) {
+      if (typeof scene.from !== "number") patch.from = 0;
+      if (typeof scene.to !== "number") patch.to = frameToSec(win.outFrame, ctx.fps);
+      patch.durationInFrames = toTimelineFrames(win.outFrame - win.inFrame, v);
+    }
+  }
   return withPunchInRetimed(tl, patchScene(tl, index, patch), index, ctx.fps);
 }
 
@@ -674,6 +786,8 @@ export function isWellFormed(tl: Timeline, sel: Selection): boolean {
       const scene = tl.scenes[sceneIndexById(tl, sel.id)];
       return !!scene && typeof scene === "object" && typeof scene.id === "string";
     }
+    case "layer":
+      return isLayerWellFormed(layersOf(tl)[layerIndexById(tl, sel.id)]);
   }
 }
 
@@ -1016,6 +1130,108 @@ export function setSubtitleStyle(
   return next === tl.subtitleStyle ? tl : { ...tl, subtitleStyle: next };
 }
 
+// ================================================================ vị trí cue
+
+/** `transform` của cue nếu đúng là object (meta do AI ghi có thể sai kiểu). */
+export function cueTransformOf(tl: Timeline, kind: CueKind, index: number): TimelineCueTransform {
+  const t = (cueList(tl, kind)[index] as { transform?: unknown } | undefined)?.transform;
+  return t && typeof t === "object" && !Array.isArray(t) ? (t as TimelineCueTransform) : {};
+}
+
+/**
+ * Chuẩn hóa transform cue: kẹp trong giới hạn của schema, làm tròn, bỏ field
+ * về mặc định (x/y 0, scale 1) - giữ field lạ. Rỗng hẳn thì trả null = xóa khóa.
+ */
+function normalizeCueTransform(t: TimelineCueTransform): TimelineCueTransform | null {
+  const next: TimelineCueTransform = { ...t };
+  const set = (key: "x" | "y" | "scale", v: unknown, lo: number, hi: number, digits: number, def: number) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      delete next[key];
+      return;
+    }
+    const p = 10 ** digits;
+    const r = Math.round(Math.min(hi, Math.max(lo, v)) * p) / p;
+    if (r === def) delete next[key];
+    else next[key] = r;
+  };
+  set("x", t.x, -1, 1, 4, 0);
+  set("y", t.y, -1, 1, 4, 0);
+  set("scale", t.scale, CUE_SCALE_MIN, CUE_SCALE_MAX, 3, 1);
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+const sameCueTransform = (a: unknown, b: TimelineCueTransform | null): boolean =>
+  JSON.stringify(a ?? null) === JSON.stringify(b);
+
+function withCueTransform<C extends BaseCue>(cue: C, t: TimelineCueTransform | null): C {
+  if (sameCueTransform((cue as { transform?: unknown }).transform, t)) return cue;
+  const next = { ...cue } as C & { transform?: TimelineCueTransform };
+  if (t) next.transform = t;
+  else delete next.transform;
+  return next;
+}
+
+/** Đặt transform TRỌN VẸN cho một cue (null = về vị trí mặc định của track). */
+export function setCueTransform(
+  tl: Timeline,
+  kind: CueKind,
+  index: number,
+  transform: TimelineCueTransform | null,
+): Timeline {
+  const t = transform ? normalizeCueTransform(transform) : null;
+  return editCue(tl, kind, index, (cue) => withCueTransform(cue, t));
+}
+
+/** Chép vị trí/cỡ của cue `index` sang MỌI cue cùng loại (cue nguồn ở mặc định = đưa tất cả về mặc định). */
+export function applyCueTransformToAll(tl: Timeline, kind: CueKind, index: number): Timeline {
+  if (!cueList(tl, kind)[index]) return tl;
+  const t = normalizeCueTransform(cueTransformOf(tl, kind, index));
+  const list = cueList(tl, kind);
+  let changed = false;
+  const next = list.map((cue) => {
+    if (!cue || typeof cue !== "object") return cue;
+    const out = withCueTransform(cue, t);
+    if (out !== cue) changed = true;
+    return out;
+  });
+  return changed ? ({ ...tl, [kind]: next } as Timeline) : tl;
+}
+
+/**
+ * Sửa CẢ CÂU karaoke một lượt. Cùng số từ: chỉ thay chữ, giữ nguyên mốc từng
+ * từ (sửa chính tả không làm lệch karaoke). Khác số từ: chia lại mốc trong cả
+ * cue theo độ dài từng từ - từ dài được đọc lâu hơn, gần với giọng thật hơn
+ * chia đều. Giữ `hi` của từ cùng vị trí; field lạ của cue giữ nguyên.
+ */
+export function setCaptionText(tl: Timeline, index: number, text: string): Timeline {
+  const cue = tl.captions[index];
+  const old = captionWordsOf(cue);
+  if (!cue || !old) return tl;
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return tl;
+  let words: TimelineCaptionWord[];
+  if (tokens.length === old.length) {
+    words = old.map((w, i) => (w.text === tokens[i] ? w : { ...w, text: tokens[i] }));
+    if (words.every((w, i) => w === old[i])) return tl;
+  } else {
+    const start = cue.from;
+    const span = Math.max(tokens.length, cue.durationInFrames);
+    const weights = tokens.map((tk) => Math.max(1, tk.length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    words = tokens.map((tk, i) => {
+      const s = start + Math.round((acc / total) * span);
+      acc += weights[i];
+      const e = i === tokens.length - 1 ? start + span : start + Math.round((acc / total) * span);
+      return { ...old[i], text: tk, start: s, end: Math.max(s, e) };
+    });
+  }
+  return {
+    ...tl,
+    captions: replaceAt(tl.captions, index, { ...cue, words, durationInFrames: Math.max(cue.durationInFrames, tokens.length) }),
+  };
+}
+
 // ================================================================ chuẩn hóa
 
 /**
@@ -1106,6 +1322,8 @@ export function selectionExists(tl: Timeline, sel: Selection | null): boolean {
       return tl.audio.music !== null;
     case "voice":
       return tl.audio.voice !== null;
+    case "layer":
+      return layerIndexById(tl, sel.id) >= 0;
   }
 }
 
@@ -1136,6 +1354,8 @@ export function deleteSelection(tl: Timeline, sel: Selection | null): Timeline {
       return { ...tl, audio: { ...tl.audio, sfx: tl.audio.sfx.filter((_, i) => i !== sel.index) } };
     case "music":
       return { ...tl, audio: { ...tl.audio, music: null } };
+    case "layer":
+      return removeLayer(tl, sel.id);
     case "voice":
       return tl;
   }
@@ -1232,6 +1452,20 @@ export function duplicateSelection(
         selection: { kind: "sfx", index: sel.index + 1 },
       };
     }
+    case "layer": {
+      // Bản sao nối ngay sau bản gốc (như cue), nằm NGAY TRÊN bản gốc về lớp
+      const layers = layersOf(tl);
+      const index = layerIndexById(tl, sel.id);
+      const src = layers[index];
+      const copy: TimelineLayer = {
+        ...structuredClone(src),
+        id: uniqueLayerId(layers, src.id),
+        from: src.from + src.durationInFrames,
+      };
+      const next = layers.slice();
+      next.splice(index + 1, 0, copy);
+      return { timeline: { ...tl, layers: next }, selection: { kind: "layer", id: copy.id } };
+    }
     default:
       return { timeline: tl, selection: sel };
   }
@@ -1250,6 +1484,11 @@ export function splitAtPlayhead(
 ): { timeline: Timeline; selection: Selection | null } | null {
   if (sel && isCueSel(sel.kind) && "index" in sel) {
     const next = splitCueAt(tl, CUE_KIND[sel.kind], sel.index, frame);
+    if (next !== tl) return { timeline: next, selection: sel };
+  }
+  if (sel?.kind === "layer") {
+    // Layer đang chọn nằm dưới playhead thì tách nó; không thì rơi xuống scene như cũ
+    const next = splitLayerAt(tl, sel.id, frame, uniqueLayerId(layersOf(tl), sel.id), ctx.fps);
     if (next !== tl) return { timeline: next, selection: sel };
   }
   // Scene: ưu tiên scene đang chọn nếu playhead nằm trong nó, không thì scene
@@ -1289,15 +1528,16 @@ export function sceneIdFromFile(scenes: TimelineScene[], relPath: string): strin
   return scenes.some((s) => s.id === base) ? uniqueSceneId(scenes, base) : base;
 }
 
-/** Độ dài tối đa (giây) của scene footage mới kéo từ thư viện. */
-export const NEW_FOOTAGE_MAX_SEC = 5;
+/** Độ dài (giây) của scene footage mới khi KHÔNG đo được thời lượng file. */
+export const NEW_FOOTAGE_FALLBACK_SEC = 5;
 /** Độ dài (giây) của scene ảnh mới. */
 export const NEW_IMAGE_SEC = 3;
 
 /**
- * Scene footage mới: đoạn đầu file, dài tối đa 5 giây (file ngắn hơn thì cả
- * file), tắt tiếng gốc - video thường đã có giọng đọc, tiếng footage chồng lên
- * là lỗi hay gặp nhất. `durationSec` chưa biết thì lấy 5 giây.
+ * Scene footage mới: NGUYÊN file, giữ tiếng gốc - người dùng thả video vào là
+ * muốn thấy và nghe đúng video đó (bản cũ cắt còn 5 giây + tắt tiếng khiến clip
+ * bị hụt và câm). Muốn ngắn hơn thì trim, muốn câm thì bật "Tắt tiếng" ở Inspector.
+ * `durationSec` chưa biết thì tạm lấy 5 giây.
  */
 export function newFootageScene(
   id: string,
@@ -1305,13 +1545,12 @@ export function newFootageScene(
   durationSec: number | null,
   fps: number,
 ): TimelineScene {
-  const maxFrames = Math.round(NEW_FOOTAGE_MAX_SEC * fps);
   const fileFrames =
     durationSec !== null && Number.isFinite(durationSec) && durationSec > 0
       ? Math.floor(durationSec * fps + 1e-6)
-      : maxFrames;
-  const frames = Math.max(1, Math.min(maxFrames, fileFrames));
-  return { id, srcVideo: relPath, from: 0, to: frameToSec(frames, fps), muted: true };
+      : Math.round(NEW_FOOTAGE_FALLBACK_SEC * fps);
+  const frames = Math.max(1, fileFrames);
+  return { id, srcVideo: relPath, from: 0, to: frameToSec(frames, fps) };
 }
 
 /** Scene ảnh tĩnh mới - 3 giây. */
@@ -1472,4 +1711,695 @@ export function newCuePlacement(
 export function sceneInsertIndexAt(spans: { start: number; end: number }[], frame: number): number {
   const i = spans.findIndex((s) => frame < (s.start + s.end) / 2);
   return i === -1 ? spans.length : i;
+}
+
+/**
+ * Chèn scene vào ĐÚNG `frame` (ô "Tạo bằng AI tại đây" của timeline): mốc nằm
+ * trong lòng một scene (cách hai mép ≥ nửa giây) thì tách scene đó tại mốc rồi
+ * chèn vào giữa; sát mép thì chèn ở ranh giới như sceneInsertIndexAt.
+ *
+ * Scene chèn vào đẩy hình phía sau lùi lại. Không có track giọng đọc riêng thì
+ * lời nằm trong footage và lùi theo hình - karaoke/phụ đề/highlight/layer/sfx BẮT
+ * ĐẦU từ chỗ chèn cũng lùi đúng chừng đó, không thì lệch tiếng. Có `audio.voice`
+ * thì giọng không lùi, cue bám giọng nên để nguyên. Track trong `locked` (người
+ * dùng khóa ở timeline) không bao giờ bị dời.
+ */
+export function insertSceneAtFrame(
+  tl: Timeline,
+  scene: TimelineScene,
+  frame: number,
+  spans: { id: string; start: number; end: number }[],
+  ctx: OpsContext,
+  locked: ReadonlySet<string> = new Set(),
+): Timeline {
+  const margin = Math.round(ctx.fps / 2);
+  const under = spans.filter((s) => frame - s.start >= margin && s.end - frame >= margin);
+  const chosen = under[under.length - 1];
+  let base = tl;
+  let at = -1;
+  let cut = 0;
+  if (chosen) {
+    const index = sceneIndexById(tl, chosen.id);
+    const split = splitSceneAt(tl, index, frame - chosen.start, uniqueSceneId(tl.scenes, chosen.id), ctx);
+    if (split !== tl) {
+      base = split;
+      at = index + 1;
+      cut = Math.round(frame);
+    }
+  }
+  if (at === -1) {
+    at = sceneInsertIndexAt(spans, frame);
+    cut = at < spans.length ? spans[at].start : (spans[spans.length - 1]?.end ?? 0);
+  }
+  const next = addScene(base, at, scene);
+  if (next === base) return tl;
+  const delta = sceneDurationFrames(scene, ctx.fps);
+  if (tl.audio.voice || !delta) return next;
+  return shiftTimedFrom(next, cut, delta, locked);
+}
+
+/**
+ * Dời mọi cue / layer / sfx BẮT ĐẦU từ `at` trở đi thêm `delta` frame (giữ field
+ * lạ). Track có tên trong `skip` giữ nguyên.
+ */
+function shiftTimedFrom(tl: Timeline, at: number, delta: number, skip: ReadonlySet<string>): Timeline {
+  const late = (c: { from?: unknown } | null | undefined): boolean =>
+    !!c && typeof c.from === "number" && c.from >= at;
+  const shift = <T extends { from: number }>(c: T): T => ({ ...c, from: c.from + delta });
+  const next: Timeline = { ...tl };
+  if (!skip.has("caption")) next.captions = tl.captions.map((c) => (late(c) ? shiftWords(shift(c), delta) : c));
+  if (!skip.has("subtitle")) next.subtitles = tl.subtitles.map((c) => (late(c) ? shift(c) : c));
+  if (!skip.has("overlay")) next.overlays = tl.overlays.map((c) => (late(c) ? shift(c) : c));
+  if (!skip.has("sfx")) {
+    next.audio = {
+      ...tl.audio,
+      sfx: tl.audio.sfx.map((s) =>
+        s && typeof s.atFrame === "number" && s.atFrame >= at ? { ...s, atFrame: s.atFrame + delta } : s,
+      ),
+    };
+  }
+  // `layers` là khóa tùy chọn - project chưa có thì không tự ghi `layers: []`
+  if (Array.isArray(tl.layers) && !skip.has("layer")) next.layers = tl.layers.map((l) => (late(l) ? shift(l) : l));
+  return next;
+}
+
+// ================================================================ layer (docs/EDITOR-V2-PLAN.md mục 1.2)
+//
+// `layers[]` là khóa top-level TÙY CHỌN: project cũ không có khóa này và phải
+// giữ nguyên như vậy (không tự ghi `layers: []`). Đọc luôn qua layersOf - meta.json
+// do AI ghi có thể để sai kiểu. `from`/`durationInFrames` là FRAME TUYỆT ĐỐI như
+// cue; `keyframes[].frame` TƯƠNG ĐỐI so với `from`. Thứ tự mảng = thứ tự vẽ (phần
+// tử sau nằm trên).
+
+export type TimelineLayer = NonNullable<Timeline["layers"]>[number];
+export type TimelineLayerKeyframe = NonNullable<TimelineLayer["keyframes"]>[number];
+export type LayerKind = TimelineLayer["kind"];
+
+const LAYER_KINDS: readonly string[] = ["image", "video", "text", "shape"];
+
+/** Danh sách layer (rỗng khi vắng mặt hoặc sai kiểu). */
+export const layersOf = (tl: Timeline): TimelineLayer[] => (Array.isArray(tl.layers) ? tl.layers : []);
+
+export const layerIndexById = (tl: Timeline, id: string): number =>
+  layersOf(tl).findIndex((l) => !!l && typeof l === "object" && l.id === id);
+
+export const layerById = (tl: Timeline, id: string): TimelineLayer | null =>
+  layersOf(tl)[layerIndexById(tl, id)] ?? null;
+
+export function isLayerWellFormed(layer: TimelineLayer | undefined | null): layer is TimelineLayer {
+  return (
+    !!layer &&
+    typeof layer === "object" &&
+    typeof layer.id === "string" &&
+    LAYER_KINDS.includes(layer.kind) &&
+    isFiniteNum(layer.from) &&
+    isFiniteNum(layer.durationInFrames)
+  );
+}
+
+const layerEnd = (l: TimelineLayer): number => l.from + l.durationInFrames;
+
+/** Ghi lại mảng layer (giữ identity khi không đổi). */
+function withLayers(tl: Timeline, layers: TimelineLayer[]): Timeline {
+  return layers === tl.layers ? tl : { ...tl, layers };
+}
+
+/** Thay layer `id` bằng kết quả của `fn` (fn trả chính layer cũ = không đổi). */
+function editLayer(tl: Timeline, id: string, fn: (layer: TimelineLayer) => TimelineLayer): Timeline {
+  const index = layerIndexById(tl, id);
+  if (index < 0) return tl;
+  const layers = layersOf(tl);
+  const cur = layers[index];
+  const next = fn(cur);
+  return next === cur ? tl : withLayers(tl, replaceAt(layers, index, next));
+}
+
+/** Id layer chưa dùng: "text-1" → "text-2"… (bỏ hậu tố số cũ trước khi đếm). */
+export function uniqueLayerId(layers: TimelineLayer[], base: string): string {
+  const taken = new Set(layers.map((l) => l?.id));
+  const stem = base.replace(/-\d+$/, "") || "layer";
+  for (let n = 2; ; n += 1) {
+    const candidate = `${stem}-${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/** Id cho layer MỚI: `<prefix>-1`, `<prefix>-2`… (prefix kebab-case). */
+export function newLayerId(layers: TimelineLayer[], prefix: string): string {
+  const taken = new Set(layers.map((l) => l?.id));
+  const stem = prefix.replace(/-\d+$/, "") || "layer";
+  for (let n = 1; ; n += 1) {
+    const candidate = `${stem}-${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/** Id layer suy từ tên file ("Logo Meta.png" → "logo-meta-1"). */
+export function layerIdFromFile(layers: TimelineLayer[], relPath: string): string {
+  const stem = sceneIdFromFile([], relPath);
+  return newLayerId(layers, stem === "scene" ? "media" : stem);
+}
+
+/**
+ * Patch NÔNG một layer (hợp đồng v2): `undefined` = xóa khóa; object lồng
+ * (transform, style, color, crop, animation) được THAY NGUYÊN - nơi gọi tự spread.
+ */
+export function patchLayer(tl: Timeline, id: string, patch: Partial<TimelineLayer>): Timeline {
+  return editLayer(tl, id, (layer) => applyPatch(layer, patch));
+}
+
+/** Thêm layer lên TRÊN CÙNG (cuối mảng). Id rỗng/trùng → không làm gì. */
+export function addLayer(tl: Timeline, layer: TimelineLayer): Timeline {
+  if (!layer?.id || layerIndexById(tl, layer.id) >= 0) return tl;
+  return { ...tl, layers: [...layersOf(tl), layer] };
+}
+
+export function removeLayer(tl: Timeline, id: string): Timeline {
+  const index = layerIndexById(tl, id);
+  if (index < 0) return tl;
+  return { ...tl, layers: layersOf(tl).filter((_, i) => i !== index) };
+}
+
+const timeOverlaps = (a: TimelineLayer, b: TimelineLayer): boolean =>
+  isLayerWellFormed(a) && isLayerWellFormed(b) && a.from < layerEnd(b) && b.from < layerEnd(a);
+
+/**
+ * Đưa layer lên (+1) / xuống (-1) một lớp. "Một lớp" = vượt qua layer GẦN NHẤT
+ * theo hướng đó mà CHỒNG THỜI GIAN với nó - đổi chỗ với layer không cùng lúc
+ * xuất hiện thì trên khung hình chẳng có gì đổi, người dùng tưởng phím hỏng.
+ * Không còn layer nào chồng theo hướng đó → trả lại chính timeline.
+ */
+export function moveLayerZ(tl: Timeline, id: string, delta: 1 | -1): Timeline {
+  const layers = layersOf(tl);
+  const index = layerIndexById(tl, id);
+  if (index < 0) return tl;
+  const self = layers[index];
+  let target = -1;
+  for (let i = index + delta; i >= 0 && i < layers.length; i += delta) {
+    if (timeOverlaps(self, layers[i])) {
+      target = i;
+      break;
+    }
+  }
+  if (target < 0) return tl;
+  return withLayers(tl, moveItem(layers, index, target));
+}
+
+/** Dời layer `delta` frame - như moveCue (`maxStart` chặn kéo ra sau hết video). */
+export function moveLayer(
+  tl: Timeline,
+  id: string,
+  delta: number,
+  maxStart: number = Number.POSITIVE_INFINITY,
+): Timeline {
+  const d = Math.round(delta);
+  if (!Number.isFinite(d) || d === 0) return tl;
+  return editLayer(tl, id, (layer) => {
+    if (!isLayerWellFormed(layer)) return layer;
+    const from = Math.min(Math.max(0, layer.from + d), Math.max(layer.from, maxStart));
+    return from === layer.from ? layer : { ...layer, from };
+  });
+}
+
+/** Đặt mốc bắt đầu tuyệt đối (frame). */
+export function setLayerStart(tl: Timeline, id: string, frame: number): Timeline {
+  const layer = layerById(tl, id);
+  if (!isLayerWellFormed(layer)) return tl;
+  return moveLayer(tl, id, Math.max(0, Math.round(frame)) - layer.from);
+}
+
+// ---- keyframe
+
+type KeyProp = "x" | "y" | "scale" | "rotate" | "opacity";
+const KEY_PROPS: KeyProp[] = ["x", "y", "scale", "rotate", "opacity"];
+
+export interface LayerKeyValues {
+  x: number;
+  y: number;
+  scale: number;
+  rotate: number;
+  opacity: number;
+}
+
+
+const keyframesOf = (layer: TimelineLayer): TimelineLayerKeyframe[] =>
+  Array.isArray(layer.keyframes)
+    ? layer.keyframes.filter((k) => !!k && typeof k === "object" && isFiniteNum(k.frame))
+    : [];
+
+/**
+ * Giá trị một thuộc tính tại frame tương đối `rel` - ĐÚNG hàm nội suy engine
+ * dùng lúc vẽ (`keyframeValue` của @engine/layerGeometry), nên keyframe chèn
+ * khi cắt/tách mang đúng giá trị hình đang hiện. undefined = không keyframe nào
+ * có thuộc tính này.
+ */
+const keyValueAt = (kfs: TimelineLayerKeyframe[], prop: KeyProp, rel: number): number | undefined =>
+  keyframeValue(kfs as EngineLayerKeyframe[], prop, rel);
+
+/**
+ * Vị trí/cỡ/xoay/độ mờ của layer tại frame TƯƠNG ĐỐI `rel`: keyframe nếu có,
+ * không thì giá trị tĩnh (transform/opacity, mặc định 0/0/1/0/1). Dùng để thêm
+ * keyframe "tại playhead" đúng chỗ hình đang đứng.
+ */
+export function layerValuesAt(layer: TimelineLayer, rel: number): LayerKeyValues {
+  const tr: Record<string, unknown> = layer.transform && typeof layer.transform === "object" ? layer.transform : {};
+  const base: LayerKeyValues = {
+    x: isFiniteNum(tr.x) ? tr.x : 0,
+    y: isFiniteNum(tr.y) ? tr.y : 0,
+    scale: isFiniteNum(tr.scale) ? tr.scale : 1,
+    rotate: isFiniteNum(tr.rotate) ? tr.rotate : 0,
+    opacity: isFiniteNum(layer.opacity) ? layer.opacity : 1,
+  };
+  const kfs = keyframesOf(layer);
+  for (const prop of KEY_PROPS) {
+    const v = keyValueAt(kfs, prop, rel);
+    if (v !== undefined) base[prop] = round4(v);
+  }
+  return base;
+}
+
+/**
+ * Keyframe ở `frame` mang giá trị tại `rel` của mọi thuộc tính ĐANG có keyframe
+ * (để đường đi không đổi qua điểm đó) - dùng khi cắt/tách layer.
+ */
+function sampleKeyframe(kfs: TimelineLayerKeyframe[], rel: number, frame: number): TimelineLayerKeyframe {
+  const kf: TimelineLayerKeyframe = { frame };
+  for (const prop of KEY_PROPS) {
+    const v = keyValueAt(kfs, prop, rel);
+    if (v !== undefined) kf[prop] = round4(v);
+  }
+  return kf;
+}
+
+/**
+ * Keyframe sau khi đầu layer dời tới frame tương đối `offset` (cắt đầu / nửa
+ * sau của lượt tách): keyframe trước `offset` bị bỏ, thay bằng MỘT keyframe tại 0
+ * mang đúng giá trị lúc đó - hình không nhảy. Keyframe từ `offset` trở đi lùi về.
+ */
+function rebaseKeyframes(kfs: TimelineLayerKeyframe[], offset: number): TimelineLayerKeyframe[] {
+  if (kfs.length === 0 || offset <= 0) return kfs;
+  const kept = kfs.filter((k) => k.frame >= offset).map((k) => ({ ...k, frame: k.frame - offset }));
+  if (!kept.some((k) => k.frame === 0)) {
+    const before = [...kfs].sort((a, b) => a.frame - b.frame).reverse().find((k) => k.frame < offset);
+    const sample = sampleKeyframe(kfs, offset, 0);
+    if (before?.ease) sample.ease = before.ease;
+    kept.unshift(sample);
+  }
+  return kept.sort((a, b) => a.frame - b.frame);
+}
+
+/** Thêm (hoặc gộp vào) keyframe tại frame tương đối `relFrame` - kẹp trong layer. */
+export function addLayerKeyframe(
+  tl: Timeline,
+  id: string,
+  relFrame: number,
+  values: Partial<LayerKeyValues>,
+): Timeline {
+  return editLayer(tl, id, (layer) => {
+    if (!isLayerWellFormed(layer) || !Number.isFinite(relFrame)) return layer;
+    const frame = clampInt(relFrame, 0, Math.max(0, layer.durationInFrames - 1));
+    const clean: Partial<LayerKeyValues> = {};
+    for (const prop of KEY_PROPS) {
+      const v = values[prop];
+      if (isFiniteNum(v)) clean[prop] = round4(v);
+    }
+    const kfs: TimelineLayerKeyframe[] = Array.isArray(layer.keyframes) ? layer.keyframes : [];
+    const at = kfs.findIndex((k) => k?.frame === frame);
+    let next: TimelineLayerKeyframe[];
+    if (at >= 0) {
+      const merged = applyPatch(kfs[at], clean);
+      if (merged === kfs[at]) return layer;
+      next = replaceAt(kfs, at, merged);
+    } else {
+      next = [...kfs, { frame, ...clean }].sort((a, b) => (a?.frame ?? 0) - (b?.frame ?? 0));
+    }
+    return { ...layer, keyframes: next };
+  });
+}
+
+/** Bỏ keyframe tại `relFrame`; hết keyframe thì xóa luôn khóa (về hành vi tĩnh). */
+export function removeLayerKeyframe(tl: Timeline, id: string, relFrame: number): Timeline {
+  return editLayer(tl, id, (layer) => {
+    if (!Array.isArray(layer.keyframes)) return layer;
+    const target = Math.round(relFrame);
+    const next = layer.keyframes.filter((k) => k?.frame !== target);
+    if (next.length === layer.keyframes.length) return layer;
+    if (next.length > 0) return { ...layer, keyframes: next };
+    const copy = { ...layer };
+    delete copy.keyframes;
+    return copy;
+  });
+}
+
+/**
+ * Ghi kết quả một lượt kéo trên khung xem trước vào layer. Thuộc tính đang có
+ * keyframe (x/y/scale/rotate) thì keyframe THẮNG transform lúc vẽ (`layerBox`),
+ * nên ghi vào transform sẽ không thấy gì - với các thuộc tính đó, thêm/cập nhật
+ * keyframe tại playhead; phần còn lại (và flip) vào transform tĩnh như thường.
+ * `absFrame` = frame tuyệt đối của playhead; ngoài khoảng layer thì chỉ ghi
+ * phần tĩnh.
+ */
+export function applyLayerCanvasTransform(
+  tl: Timeline,
+  id: string,
+  transform: Record<string, unknown>,
+  absFrame: number,
+): Timeline {
+  const layer = layerById(tl, id);
+  if (!isLayerWellFormed(layer)) return tl;
+  const kfs = keyframesOf(layer);
+  const keyed = (["x", "y", "scale", "rotate"] as const).filter((p) => kfs.some((k) => isFiniteNum(k[p])));
+  if (keyed.length === 0) return patchLayer(tl, id, { transform: transform as TimelineLayer["transform"] });
+  const rel = Math.round(absFrame) - layer.from;
+  const inside = rel >= 0 && rel < layer.durationInFrames;
+  const oldBase: Record<string, unknown> =
+    layer.transform && typeof layer.transform === "object" ? layer.transform : {};
+  const base: Record<string, unknown> = { ...transform };
+  const keyValues: Partial<LayerKeyValues> = {};
+  for (const p of keyed) {
+    // Giữ nguyên giá trị tĩnh cũ của thuộc tính có keyframe
+    if (p in oldBase) base[p] = oldBase[p];
+    else delete base[p];
+    const v = transform[p];
+    if (isFiniteNum(v)) keyValues[p] = v;
+  }
+  let next = patchLayer(tl, id, { transform: base as TimelineLayer["transform"] });
+  if (inside && Object.keys(keyValues).length > 0) next = addLayerKeyframe(next, id, rel, keyValues);
+  return next;
+}
+
+// ---- kéo mép / tách
+
+/** Độ dài tối đa (frame) của layer video theo file thật; null = không giới hạn. */
+function layerMaxFrames(layer: TimelineLayer, ctx: OpsContext): number | null {
+  if (layer.kind !== "video" || typeof layer.src !== "string") return null;
+  const sec = ctx.mediaDurationSec(layer.src);
+  if (sec === null) return null;
+  const start = isFiniteNum(layer.mediaStart) ? layer.mediaStart : 0;
+  return Math.max(1, Math.floor((sec - start) * ctx.fps + 1e-6));
+}
+
+/**
+ * Kéo mép layer `delta` frame. Mép đầu: đổi `from` giữ mép cuối - layer video
+ * cắt đầu file theo (`mediaStart`), keyframe giữ nguyên VỊ TRÍ TUYỆT ĐỐI (lùi
+ * theo, phần bị cắt thay bằng keyframe tại 0). Mép cuối: đổi độ dài, layer video
+ * không dài quá phần còn lại của file. Luôn còn ≥ 1 frame.
+ */
+export function resizeLayer(
+  tl: Timeline,
+  id: string,
+  edge: "start" | "end",
+  delta: number,
+  ctx: OpsContext,
+): Timeline {
+  const d = Math.round(delta);
+  if (!Number.isFinite(d) || d === 0) return tl;
+  return editLayer(tl, id, (layer) => {
+    if (!isLayerWellFormed(layer)) return layer;
+    const end = layerEnd(layer);
+    if (edge === "start") {
+      const mediaStart = isFiniteNum(layer.mediaStart) ? layer.mediaStart : 0;
+      const mediaStartFrames = Math.round(mediaStart * ctx.fps);
+      // Video: không kéo đầu ra trước giây 0 của file
+      const lower = layer.kind === "video" ? Math.max(0, layer.from - mediaStartFrames) : 0;
+      const from = clampInt(layer.from + d, lower, end - 1);
+      const shift = from - layer.from;
+      if (shift === 0) return layer;
+      const next: TimelineLayer = { ...layer, from, durationInFrames: end - from };
+      if (layer.kind === "video") next.mediaStart = Math.max(0, frameToSec(mediaStartFrames + shift, ctx.fps));
+      const kfs = keyframesOf(layer);
+      if (kfs.length > 0) {
+        next.keyframes = shift > 0 ? rebaseKeyframes(kfs, shift) : kfs.map((k) => ({ ...k, frame: k.frame - shift }));
+      }
+      return next;
+    }
+    const max = layerMaxFrames(layer, ctx);
+    const upper = max === null ? Number.POSITIVE_INFINITY : Math.max(max, layer.durationInFrames);
+    const dur = clampInt(layer.durationInFrames + d, 1, upper);
+    return dur === layer.durationInFrames ? layer : { ...layer, durationInFrames: dur };
+  });
+}
+
+/** Đặt độ dài tuyệt đối (frame). */
+export function setLayerDuration(tl: Timeline, id: string, frames: number, ctx: OpsContext): Timeline {
+  const layer = layerById(tl, id);
+  if (!isLayerWellFormed(layer)) return tl;
+  return resizeLayer(tl, id, "end", Math.max(1, Math.round(frames)) - layer.durationInFrames, ctx);
+}
+
+/**
+ * Tách layer tại frame TUYỆT ĐỐI `frame`. Nửa đầu giữ id (bỏ hiệu ứng RA - chỗ
+ * cắt không còn là điểm kết thúc), nửa sau nhận `newId` (bỏ hiệu ứng VÀO), nằm
+ * ngay trên nửa đầu. Keyframe được cắt liền mạch tại điểm tách (nửa sau đánh lại
+ * mốc từ 0); layer video nửa sau phát tiếp file từ đúng chỗ cắt.
+ */
+export function splitLayerAt(tl: Timeline, id: string, frame: number, newId: string, fps: number): Timeline {
+  const index = layerIndexById(tl, id);
+  const layer = layersOf(tl)[index];
+  if (!isLayerWellFormed(layer)) return tl;
+  if (!newId || layerIndexById(tl, newId) >= 0) return tl;
+  const at = Math.round(frame);
+  if (at <= layer.from || at >= layerEnd(layer)) return tl;
+  const local = at - layer.from;
+
+  const first: TimelineLayer = { ...layer, durationInFrames: local };
+  const second: TimelineLayer = {
+    ...structuredClone(layer),
+    id: newId,
+    from: at,
+    durationInFrames: layer.durationInFrames - local,
+  };
+  const kfs = keyframesOf(layer);
+  if (kfs.length > 0) {
+    const head = kfs.filter((k) => k.frame <= local);
+    if (!head.some((k) => k.frame === local)) head.push(sampleKeyframe(kfs, local, local));
+    first.keyframes = head.sort((a, b) => a.frame - b.frame);
+    second.keyframes = rebaseKeyframes(structuredClone(kfs), local);
+  }
+  if (layer.kind === "video") {
+    const start = isFiniteNum(layer.mediaStart) ? layer.mediaStart : 0;
+    second.mediaStart = frameToSec(Math.round(start * fps) + local, fps);
+  }
+  const anim = layer.animation && typeof layer.animation === "object" ? layer.animation : null;
+  if (anim) {
+    const a1 = { ...anim };
+    delete a1.out;
+    const a2 = { ...structuredClone(anim) };
+    delete a2.in;
+    first.animation = a1;
+    second.animation = a2;
+  }
+  const layers = layersOf(tl).slice();
+  layers.splice(index, 1, first, second);
+  return { ...tl, layers };
+}
+
+// ---- layer mới
+
+/** Độ dài mặc định (giây) của layer mới thêm tại playhead. */
+export const NEW_LAYER_SEC = 3;
+/** Layer video mới khi KHÔNG đo được thời lượng file (đo được thì lấy nguyên file). */
+export const NEW_LAYER_VIDEO_FALLBACK_SEC = 5;
+
+/**
+ * Chỗ đặt layer mới tại playhead `frame` - cùng luật với cue (newCuePlacement):
+ * không bao giờ thò ra sau hết video, gần cuối thì co lại / lùi điểm bắt đầu.
+ */
+export function newLayerPlacement(
+  frame: number,
+  totalFrames: number,
+  fps: number,
+  sec: number = NEW_LAYER_SEC,
+): { from: number; durationInFrames: number } {
+  const total = Math.max(1, Math.round(totalFrames));
+  const full = Math.max(1, Math.round(sec * fps));
+  const from = Math.min(Math.max(0, Math.round(frame)), total - 1);
+  const remaining = total - from;
+  if (remaining >= full) return { from, durationInFrames: full };
+  if (remaining >= Math.round(fps / 2)) return { from, durationInFrames: remaining };
+  const start = Math.max(0, total - full);
+  return { from: start, durationInFrames: Math.max(1, total - start) };
+}
+
+/** Hiệu ứng vào/ra mặc định của layer mới - nhẹ, không gây chú ý hơn nội dung. */
+const DEFAULT_LAYER_ANIMATION = { in: "fade", out: "fade" } as const;
+
+/** Layer chữ mới: chữ trắng đậm căn giữa, hộp rộng 80% khung, nằm giữa khung. */
+export function newTextLayer(
+  id: string,
+  text: string,
+  from: number,
+  durationInFrames: number,
+  opts: { vertical?: boolean } = {},
+): TimelineLayer {
+  return {
+    id,
+    kind: "text",
+    from: Math.max(0, Math.round(from)),
+    durationInFrames: Math.max(1, Math.round(durationInFrames)),
+    text,
+    width: 0.8,
+    style: {
+      fontSizePx: opts.vertical ? 84 : 72,
+      fontWeight: 700,
+      color: "#ffffff",
+      align: "center",
+      lineHeight: 1.2,
+      shadow: true,
+    },
+    animation: { ...DEFAULT_LAYER_ANIMATION },
+  } as TimelineLayer;
+}
+
+/** Khối màu mới: chữ nhật bo góc 16:9, rộng 40% khung, màu chính của brand. */
+export function newShapeLayer(id: string, from: number, durationInFrames: number, color = "#ed3c47"): TimelineLayer {
+  return {
+    id,
+    kind: "shape",
+    from: Math.max(0, Math.round(from)),
+    durationInFrames: Math.max(1, Math.round(durationInFrames)),
+    width: 0.4,
+    aspect: 16 / 9,
+    style: { backgroundColor: color, radiusPx: 24 },
+    animation: { ...DEFAULT_LAYER_ANIMATION },
+  } as TimelineLayer;
+}
+
+/**
+ * Layer ảnh/video mới từ file trong project. Video: phát từ đầu file, GIỮ tiếng
+ * (ghi `muted: false` tường minh - engine mặc định layer video là câm). Tỉ lệ
+ * hộp lấy từ chính file lúc vẽ (không ghi `aspect`).
+ */
+export function newMediaLayer(
+  id: string,
+  kind: "image" | "video",
+  src: string,
+  from: number,
+  durationInFrames: number,
+): TimelineLayer {
+  const layer: Record<string, unknown> = {
+    id,
+    kind,
+    from: Math.max(0, Math.round(from)),
+    durationInFrames: Math.max(1, Math.round(durationInFrames)),
+    src,
+    width: 0.5,
+    animation: { ...DEFAULT_LAYER_ANIMATION },
+  };
+  if (kind === "video") {
+    layer.mediaStart = 0;
+    layer.muted = false;
+  }
+  return layer as TimelineLayer;
+}
+
+// ================================================================ sao chép / dán
+
+/** Một món trong clipboard của editor (bản sao sâu - sửa timeline sau đó không đổi nó). */
+export type ClipboardEntry =
+  | { kind: "scene"; scene: TimelineScene }
+  | { kind: "layer"; layer: TimelineLayer }
+  | { kind: "caption"; cue: TimelineCaptionCue }
+  | { kind: "subtitle"; cue: TimelineSubtitleCue }
+  | { kind: "overlay"; cue: TimelineHighlightCue }
+  | { kind: "sfx"; sfx: TimelineSfx };
+
+/** Sao chép phần tử đang chọn - null khi không sao chép được (nhạc, giọng, dữ liệu lỗi). */
+export function copySelection(tl: Timeline, sel: Selection | null): ClipboardEntry | null {
+  if (!sel || !selectionExists(tl, sel) || !isWellFormed(tl, sel)) return null;
+  switch (sel.kind) {
+    case "scene":
+      return { kind: "scene", scene: structuredClone(tl.scenes[sceneIndexById(tl, sel.id)]) };
+    case "layer": {
+      const layer = layerById(tl, sel.id);
+      return layer ? { kind: "layer", layer: structuredClone(layer) } : null;
+    }
+    case "caption":
+      return { kind: "caption", cue: structuredClone(tl.captions[sel.index]) };
+    case "subtitle":
+      return { kind: "subtitle", cue: structuredClone(tl.subtitles[sel.index]) };
+    case "overlay":
+      return { kind: "overlay", cue: structuredClone(tl.overlays[sel.index]) };
+    case "sfx":
+      return { kind: "sfx", sfx: structuredClone(tl.audio.sfx[sel.index]) };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Dán tại playhead `frame`: scene chèn vào vị trí tương ứng (cùng luật thả từ
+ * thư viện), layer/cue bắt đầu tại playhead (layer nằm trên cùng), sfx đặt tại
+ * playhead. Id mới khi trùng. Mỗi lần dán là một bản sao mới (clipboard dùng lại được).
+ */
+export function pasteClipboard(
+  tl: Timeline,
+  clip: ClipboardEntry,
+  frame: number,
+  spans: { start: number; end: number }[],
+): { timeline: Timeline; selection: Selection | null } | null {
+  const at = Math.max(0, Math.round(frame));
+  if (!Number.isFinite(at)) return null;
+  switch (clip.kind) {
+    case "scene": {
+      const src = structuredClone(clip.scene);
+      const id = tl.scenes.some((s) => s.id === src.id) ? uniqueSceneId(tl.scenes, src.id) : src.id;
+      const next = addScene(tl, sceneInsertIndexAt(spans, at), { ...src, id });
+      return next === tl ? null : { timeline: next, selection: { kind: "scene", id } };
+    }
+    case "layer": {
+      const src = structuredClone(clip.layer);
+      const layers = layersOf(tl);
+      const id = layers.some((l) => l?.id === src.id) ? uniqueLayerId(layers, src.id) : src.id;
+      const next = addLayer(tl, { ...src, id, from: at });
+      return next === tl ? null : { timeline: next, selection: { kind: "layer", id } };
+    }
+    case "caption": {
+      const src = structuredClone(clip.cue);
+      const cue = shiftWords({ ...src, from: at }, at - src.from);
+      const index = sortedInsertIndex(tl.captions, at);
+      const captions = tl.captions.slice();
+      captions.splice(index, 0, cue);
+      return { timeline: { ...tl, captions }, selection: { kind: "caption", index } };
+    }
+    case "subtitle": {
+      const index = sortedInsertIndex(tl.subtitles, at);
+      const subtitles = tl.subtitles.slice();
+      subtitles.splice(index, 0, { ...structuredClone(clip.cue), from: at });
+      return { timeline: { ...tl, subtitles }, selection: { kind: "subtitle", index } };
+    }
+    case "overlay": {
+      const index = sortedInsertIndex(tl.overlays, at);
+      const overlays = tl.overlays.slice();
+      overlays.splice(index, 0, { ...structuredClone(clip.cue), from: at });
+      return { timeline: { ...tl, overlays }, selection: { kind: "overlay", index } };
+    }
+    case "sfx": {
+      const list = [...tl.audio.sfx, { ...structuredClone(clip.sfx), atFrame: at }];
+      return {
+        timeline: { ...tl, audio: { ...tl.audio, sfx: list } },
+        selection: { kind: "sfx", index: list.length - 1 },
+      };
+    }
+  }
+}
+
+// ================================================================ cảnh trám (ảnh AI)
+
+/** Độ phóng cuối của punch-in nhẹ cho cảnh trám - đủ để ảnh tĩnh "sống", không giật. */
+export const FILLER_PUNCH_SCALE = 1.08;
+
+/** Scene ảnh cảnh trám: ảnh tĩnh 3 giây + punch-in nhẹ (1 → 1.08). */
+export function newFillerScene(id: string, relPath: string, fps: number): TimelineScene {
+  const scene = newImageScene(id, relPath, fps);
+  const dur = scene.durationInFrames ?? Math.round(NEW_IMAGE_SEC * fps);
+  return {
+    ...scene,
+    zoom: {
+      keys: [
+        { frame: 0, scale: 1, ease: "inOut" },
+        { frame: Math.max(1, dur - 1), scale: FILLER_PUNCH_SCALE },
+      ],
+    },
+  };
 }

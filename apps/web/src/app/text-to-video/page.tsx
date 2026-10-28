@@ -19,6 +19,7 @@ import {
   isTextToVideoJob,
   TEXT_TO_VIDEO_STATUS_LABEL,
   TEXT_TO_VIDEO_STATUS_TONE,
+  updateTextToVideo,
   type TextSourceKind,
   type TextToVideoMeta,
   type TextToVideoStatus,
@@ -100,6 +101,14 @@ function CreateModal({
         });
         id = session.id;
         setCreatedId(id);
+      } else {
+        // Phiên đã tạo ở lượt trước (bóc bài lỗi) - người dùng thường vừa sửa
+        // link gõ nhầm rồi bấm lại. Không ghi nguồn mới vào phiên thì server
+        // bóc lại đúng link CŨ và hỏng y như lần trước.
+        await updateTextToVideo(id, {
+          ...(name.trim() ? { name: name.trim() } : {}),
+          source: { kind, url: url.trim(), text: text.trim() },
+        });
       }
       // Link thì bóc nội dung luôn - đó mới là thứ người dùng đang chờ.
       // Văn bản dán tay thì đã có sẵn nội dung, vào thẳng phiên.

@@ -166,17 +166,22 @@ router.put("/:id", (req, res) => {
     );
   }
 
-  if ("name" in body) style.name = requiredStr(body, "name", "tên phong cách");
+  // Kiểm HẾT rồi mới gán: `style` là object nằm trong cache của readVideoStyles,
+  // gán dở rồi ném 400 ở field sau là bản sửa nửa vời vẫn hiện ở mọi GET (và bị
+  // ghi xuống đĩa ở lần lưu kế tiếp) dù request đã bị từ chối
+  const patch: Partial<Pick<VideoStyle, "name" | "art" | "avoid" | "motion" | "palette">> = {};
+  if ("name" in body) patch.name = requiredStr(body, "name", "tên phong cách");
   if ("art" in body) {
-    style.art = requiredStr(body, "art", "chỉ đạo mỹ thuật cho ảnh (viết tiếng Anh)");
+    patch.art = requiredStr(body, "art", "chỉ đạo mỹ thuật cho ảnh (viết tiếng Anh)");
   }
   if ("avoid" in body) {
-    style.avoid = requiredStr(body, "avoid", "thứ cần tránh trong ảnh (viết tiếng Anh)");
+    patch.avoid = requiredStr(body, "avoid", "thứ cần tránh trong ảnh (viết tiếng Anh)");
   }
   if ("motion" in body) {
-    style.motion = requiredStr(body, "motion", "cách dựng cảnh và chuyển động (viết tiếng Việt)");
+    patch.motion = requiredStr(body, "motion", "cách dựng cảnh và chuyển động (viết tiếng Việt)");
   }
-  if ("palette" in body) style.palette = normPalette(body.palette);
+  if ("palette" in body) patch.palette = normPalette(body.palette);
+  Object.assign(style, patch);
 
   style.updatedAt = nowIso();
   writeVideoStyles(data);

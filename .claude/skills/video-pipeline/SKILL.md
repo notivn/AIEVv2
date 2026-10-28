@@ -94,6 +94,47 @@ curl -s -X POST http://localhost:6869/api/projects/<id>/publish   -H "content-ty
 ```
 `publish` generates `.srt`/`.vtt` from the transcript and has the AI write the title/description/hashtags for TikTok, YouTube and Facebook following the Style Design. **Precondition**: the transcript must be the FINAL one. If it was cut/remapped, write the final version to `assets/transcript.final.json` (the transcript loader prefers this file) - otherwise the subtitles will drift out of sync with the cut video.
 
+## Source kind: footage, article or text request
+
+`brief.sourceKind` says what the video is built from (the "Nguồn video" card on the project page). The edit prompt always prints a "Nguồn của video" section for it:
+- `video` (default) - edit the uploaded files in `assets/`.
+- `article` - no footage. The article text is in `assets/source-article.md` (fetched from `brief.sourceUrl`; if the file is missing, `POST /api/projects/:id/source/article` first). Build a motion graphics video that retells its key points.
+- `request` - no footage. `brief.sourceText` is the user's request/content; build a motion graphics video for it. Never invent figures, names or quotes it does not give.
+
+Voice-over for the two no-footage kinds is `brief.narrationMode` (the prompt prints it in all three directions):
+- `none` - no voice, no transcript: auto-cut does not apply and karaoke has no speech to sync to.
+- `tts` - write the narration script, then `POST /api/projects/:id/narration {"script": ...}` and poll the task. The server reads it in EXACTLY `brief.narrationVoice` (the body cannot pick a voice - the user chose it), writes `assets/narration.wav` + `assets/narration.transcript.json` and sets `meta.audio.voice`.
+- `file` - the user's recording `brief.narrationFile`: `POST /narration {}` only transcribes it. The recording is the timeline and the main content.
+With a voice, the voice is the timeline: video length = voice length, scenes and karaoke follow the transcript, music ducks under it. Images come from AI illustrations only when `brief.autoIllustrations` is on (the server refuses otherwise) - off means text + HTML/SVG graphics + images already in `assets/`. Prefer `noti-tiktok-full-text` (vertical) or `noti-youtube-edit` mode B (landscape) over talking-head skills.
+
+## Finish mode: stop at the draft, or go all the way to final
+
+`brief.finishMode` decides where an AI edit session stops. The edit prompt always states the mode, in both directions - follow the prompt over the step list above when they disagree.
+
+| `finishMode` | Session goal | Where you stop | Done means |
+|---|---|---|---|
+| `"draft"` (default) | `draft` | after step 5 (QC) | a NEW `assemble-draft` **job** finished during this run, and QC ran on that exact `outputs/<id>-draft.mp4` |
+| `"final"` | `final` | after step 7 | `outputs/<id>-v<N>.mp4` exists and `meta.json` has `status: "done"` + `output` |
+
+In `draft` mode:
+- **Never render final**: no `assemble-final` / `scene-final` job, no `--quality standard` CLI render, no thumbnail, no publish package, do not set `status: "done"` or `output` - even though steps 6-7 above say so. The user reviews the draft, edits it by hand, and clicks "Xuất final" themselves.
+- The final full draft must come from a queued job (`POST /api/projects/<id>/editor/render` with `{"quality":"draft"}` queues the stale scene drafts + `assemble-draft`). A draft rendered by hand with the CLI has no job row, so the server gate never sees it and keeps auto-resuming the session.
+- Run QC on that draft. A `fail` still has to be fixed (re-render the draft, QC again) - the gate only checks that QC ran, but the user will hit `QC_FAILED` on export.
+- End with a report: what was built, the QC result, and that the draft is waiting for review in the editor.
+
+The batch flows (short clips, aspect-ratio repurposing, Text to video, Auto cut) still open `final` sessions, whatever the child project's brief says.
+
+### Handoff from the editor ("Giao cho AI")
+
+`POST /api/projects/<id>/editor/handoff {instruction, finishMode?}` opens a new session (default goal `draft`) that **continues from the current timeline**. The prompt opens with a "BÀN GIAO TỪ TRÌNH CHỈNH SỬA" block. The user has already edited by hand, so:
+- Re-read `meta.json` first and before every edit. Treat what is there as approved.
+- **Keep every manual edit**: scene order/length/`from`/`to`, cues, sfx, music, and the v2 fields `layers[]` (with `animation`, `keyframes`), `fit`, `transform`, `crop`, `color`, `volume`, `fadeInSec`/`fadeOutSec`, `speed`, `transition`. Change only what the instruction needs. Unknown fields stay.
+- Do not redo brief steps that are already done (auto-cut already applied - check `assets/auto-trim-report.json` / `transcript.cut.json`; subtitles already there; music already chosen). Do the missing part plus the instruction.
+- Do not delete and rebuild existing HyperFrames compositions; edit only the scenes that need it.
+- The server snapshots an `ai-before` revision before you start, so the user can undo your whole run in one click. That is no excuse for sloppy edits.
+
+**The user may edit between turns.** In any session, the editor can write `meta.json` while you are idle (between turns, or while you wait for a job). Never keep `meta.json` in memory across a wait: Read it again right before each Edit, edit in place, never Write the whole file from memory.
+
 ## Render queue rules (backend)
 
 1. **Every render goes through the queue** - including the ones Claude runs by hand. Jobs are written to SQLite: `id, projectId, type (scene-draft|scene-final|assemble-draft|assemble-final|image-gen), status, progress, log, startedAt, finishedAt`.
@@ -142,6 +183,17 @@ The number one reason the pipeline burns an entire hour: **re-rendering a draft 
   `node -e "fetch(url, { method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({...}) })"`
   (or write the JSON to a file and use `curl --data-binary @file`).
 
+## Agent sandbox (what the policy blocks)
+
+Every tool call from the in-app agent passes through `apps/server/src/agentPolicy.ts` (a PreToolUse hook) before it runs. The prompt always carries untrusted text (transcripts, imported articles, file descriptions), so these are refused no matter what the prompt says:
+
+- **Network**: only the local API (`http://localhost:6869`) - `curl` to any other host, `wget`, `Invoke-WebRequest`, proxies/`--resolve`, external URLs inside `node -e`/scripts, and UNC paths. Brand logos come from `POST /api/brand-logos`, images from `/api/illustrations`; never download them yourself.
+- **Installs**: `npm install/i/ci/exec`, `npx <anything except hyperframes/remotion/tsc/tsx>` (or with `@version`/`-y`), `pip`/`python -m pip`, `winget`/`choco`. Missing dependency = ask the user to run Doctor.
+- **Secrets**: `.env`, `~/.claude/.credentials.json`, `~/.ssh`... API keys are not in your environment either - the server holds them.
+- **Self-escalation**: writing `.claude/settings*.json`, `.mcp.json`, `agentPolicy.ts`, `.git/hooks`; user-only APIs (`/api/connections`, `/api/tunnel`, `/api/update`, `/api/health`, `/api/chat`, ...); WebFetch/WebSearch and MCP tools.
+
+A refusal comes back as the tool error with the reason - change approach, do not try to get around it. To allow something new, edit the lists at the top of `agentPolicy.ts` (a human change, never the agent's).
+
 ## Checklist before reporting completion
 
 - [ ] If the brief enables autoCut: the cut was done per the `auto-cut` skill, a second silencedetect pass verified the cut version, and the report states the seconds/segments removed
@@ -150,7 +202,8 @@ The number one reason the pipeline burns an entire hour: **re-rendering a draft 
 - [ ] Sound effects land on the right frames, and their volume does not bury the voice (sfx ~10dB below voice)
 - [ ] The output matches the dimensions/fps in `meta.json`
 - [ ] Automated QC ran on the draft with no remaining `fail` checks (the report spells out any leftover warn checks)
-- [ ] `meta.json` has updated `status` + `output`
-- [ ] The thumbnail was generated and Read to verify the diacritics are complete
-- [ ] The publish package was generated (`.srt`/`.vtt` + metadata), using the FINAL post-cut transcript
+- [ ] `finishMode: "final"` only: `meta.json` has updated `status` + `output`
+- [ ] `finishMode: "final"` only: the thumbnail was generated and Read to verify the diacritics are complete
+- [ ] `finishMode: "final"` only: the publish package was generated (`.srt`/`.vtt` + metadata), using the FINAL post-cut transcript
+- [ ] `finishMode: "draft"`: the draft came from an `assemble-draft` job of this run, QC ran on it, and nothing final was rendered
 - [ ] Any new lesson learned was written into the relevant skill

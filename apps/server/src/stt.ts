@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { addTokenUsage } from "./db.js";
+import { ffmpegSafeArgs } from "./ffmpegSafe.js";
 import { geminiApiKey } from "./gemini.js";
 import { extractAudioWav, probeDurationSec, transcribeVideo } from "./transcribe.js";
 import { parseTranscriptJson } from "./transcript.js";
@@ -282,7 +283,7 @@ function resolveGeminiModel(model?: string | null): string {
 }
 
 function geminiEndpoint(model: string): string {
-  return `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`;
+  return `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(model)}:generateContent`;
 }
 
 /**
@@ -476,8 +477,6 @@ async function runGemini(
 
     const segments: SttSegment[] = [];
     let language: string | null = null;
-    let inTokTotal = 0;
-    let outTokTotal = 0;
 
     for (let i = 0; i < chunks.length; i += 1) {
       if (input.isCanceled?.()) throw new Error("Job đã bị hủy");
@@ -500,8 +499,10 @@ async function runGemini(
           }),
           isCanceled: input.isCanceled,
         });
-        inTokTotal += call.inTok;
-        outTokTotal += call.outTok;
+        // Ghi NGAY từng khúc chứ không cộng dồn tới cuối: khúc sau hỏng (mạng,
+        // hủy job, không câu nào) là hàm ném lỗi và các khúc trước - Google đã
+        // tính tiền thật - biến mất khỏi Dashboard
+        recordGeminiSttUsage(call.inTok, call.outTok);
 
         const parsed = parseGeminiSttChunk(firstJsonObject(call.text), chunk.start, chunk.dur);
         if (!language && parsed.language) language = parsed.language;
@@ -518,23 +519,6 @@ async function runGemini(
       throw new Error(
         "Gemini không bóc được câu nào - kiểm tra lại video có tiếng nói không, hoặc đổi provider.",
       );
-    }
-
-    // Kế toán token: phụ trợ, nuốt mọi lỗi (đúng như gemini.ts/translate.ts)
-    try {
-      if (inTokTotal > 0 || outTokTotal > 0) {
-        addTokenUsage(
-          "stt_gemini",
-          null,
-          inTokTotal,
-          outTokTotal,
-          (inTokTotal * GEMINI_PRICE_IN_PER_M) / 1_000_000 +
-            (outTokTotal * GEMINI_PRICE_OUT_PER_M) / 1_000_000,
-          "gemini",
-        );
-      }
-    } catch {
-      /* usage là phụ - không chặn luồng chính */
     }
 
     const speakers = collectSpeakers(segments);
@@ -554,6 +538,24 @@ async function runGemini(
     });
   } finally {
     rmQuiet(wavAbs);
+  }
+}
+
+/** Kế toán token của MỘT khúc: phụ trợ, nuốt mọi lỗi (đúng như gemini.ts/translate.ts) */
+function recordGeminiSttUsage(inTok: number, outTok: number): void {
+  try {
+    if (inTok > 0 || outTok > 0) {
+      addTokenUsage(
+        "stt_gemini",
+        null,
+        inTok,
+        outTok,
+        (inTok * GEMINI_PRICE_IN_PER_M) / 1_000_000 + (outTok * GEMINI_PRICE_OUT_PER_M) / 1_000_000,
+        "gemini",
+      );
+    }
+  } catch {
+    /* usage là phụ - không chặn luồng chính */
   }
 }
 
@@ -1189,7 +1191,7 @@ async function sliceWav(
 ): Promise<void> {
   const r = await execFileCaptureAll(
     "ffmpeg",
-    [
+    ffmpegSafeArgs([
       "-y",
       "-ss",
       String(startSec),
@@ -1204,7 +1206,7 @@ async function sliceWav(
       "-c:a",
       "pcm_s16le",
       outWav,
-    ],
+    ]),
     { timeoutMs: 10 * 60_000, isCanceled },
   );
   if (r.canceled) throw new Error("Job đã bị hủy");

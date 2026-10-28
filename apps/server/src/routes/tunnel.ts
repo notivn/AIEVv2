@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { childEnv, repoRoot, upsertEnvVar } from "../config.js";
+import { childEnv, paths, repoRoot, upsertEnvVar } from "../config.js";
 import { Router } from "express";
 import { HttpError, killTree } from "../util.js";
 import { hasLiveUploadSessions } from "./uploadSession.js";
@@ -55,13 +55,19 @@ function pushLog(chunk: string): void {
  * Đường dẫn cloudflared: PATH (where/which) trước, rồi các vị trí cài chuẩn -
  * server chạy từ .command trên macOS có PATH tối giản KHÔNG chứa /opt/homebrew/bin.
  */
+// .runtime/bin: doctor.mjs tải cloudflared về đây (macOS không có brew) - PATH của
+// server không có thư mục này, thiếu dòng này là doctor báo "đã cài" mà bật tunnel
+// vẫn 409 NOT_INSTALLED (cùng thứ tự với findLocalBinary của doctor.mjs)
 const CLOUDFLARED_KNOWN_PATHS =
   process.platform === "win32"
     ? [
+        path.join(paths.runtime.bin, "cloudflared.exe"),
+        path.join(repoRoot, "start", "bin", "cloudflared.exe"),
         "C:\\Program Files (x86)\\cloudflared\\cloudflared.exe",
         "C:\\Program Files\\cloudflared\\cloudflared.exe",
       ]
     : [
+        path.join(paths.runtime.bin, "cloudflared"),
         path.join(repoRoot, "start", "bin", "cloudflared"), // start.sh tự tải về đây khi máy không có brew
         "/opt/homebrew/bin/cloudflared",
         "/usr/local/bin/cloudflared",

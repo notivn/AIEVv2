@@ -89,7 +89,8 @@ SRC_STAMP="$(node "$ROOT/start/build-stamp.mjs" --print)"
 
 kill_ports() {
   for port in 6868 6869; do
-    lsof -ti tcp:$port 2>/dev/null | xargs kill -9 2>/dev/null || true
+    # -sTCP:LISTEN: chỉ tiến trình đang nghe cổng, không phải trình duyệt đang nối tới nó
+    lsof -ti tcp:$port -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
   done
   rm -f "$RUN_FILE"
   sleep 1

@@ -57,12 +57,19 @@ export default function AssetsPage() {
   // dòng, cuộn tay tìm một file là việc máy nên làm hộ.
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  // Tab đang xem - kết quả về muộn của tab CŨ (đổi tab giữa lúc tải, hay upload
+  // xong khi người dùng đã sang Outputs) không được đè lên danh sách tab đang mở
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
 
   const load = useCallback(async (s: Scope) => {
     try {
-      setFiles(await getAssets(s));
+      const list = await getAssets(s);
+      if (scopeRef.current !== s) return;
+      setFiles(list);
       setError(null);
     } catch (e) {
+      if (scopeRef.current !== s) return;
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);

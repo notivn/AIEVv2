@@ -172,7 +172,13 @@ export function AutoCutCreateModal({
 
   // Mỗi lần mở modal: nạp lại danh sách nguồn (user vừa copy file vào imports/)
   useEffect(() => {
-    if (open) loadSources();
+    if (!open) return;
+    loadSources();
+    // Mở lại là một lượt tạo MỚI. Modal đóng không unmount nên id phiên tạo dở
+    // của lượt trước còn nguyên - giữ nó thì bấm "Tạo" với nguồn khác sẽ bỏ qua
+    // bước tạo và đem đi plan + mở đúng phiên CŨ (phiên đó đã nằm trong danh sách).
+    setCreatedId(null);
+    setCreateError(null);
   }, [open, loadSources]);
 
   // Tiến trình server nhận file - upload vào imports/ không kèm projectId

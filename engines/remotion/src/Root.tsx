@@ -38,6 +38,7 @@ const demoManifest: Manifest = {
   audio: { sfx: [], music: null },
   captions: [],
   overlays: [],
+  layers: [],
   // Demo không có phụ đề dịch - `subtitles` có default [] khi parse, nhưng
   // literal này khai theo KIỂU ĐÃ PARSE nên phải ghi đủ trường.
   subtitles: [],

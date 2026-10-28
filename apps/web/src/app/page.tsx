@@ -12,6 +12,7 @@ import {
   MessagesSquare,
   Play,
   Sparkles,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -79,6 +80,29 @@ function localDayKey(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/**
+ * Mốc "đã dọn" banner job lỗi: job lỗi KẾT THÚC trước mốc này không hiện ở
+ * dashboard nữa. Chỉ là tiện ích riêng của người xem (localStorage, bọc
+ * try/catch) - không xóa job trên server, Render Queue vẫn hiện đủ kèm log.
+ * Lưu mốc thời gian thay vì danh sách id: không phình theo số job, và job lỗi
+ * mới phát sinh sau khi dọn vẫn tự hiện lại.
+ */
+const FAILED_CLEARED_KEY = "aiev.dashboard.failedClearedAt";
+
+function readFailedClearedAt(): number {
+  try {
+    const v = Number(localStorage.getItem(FAILED_CLEARED_KEY));
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Mốc dùng để so với mốc dọn: lúc job kết thúc (lỗi), thiếu thì lúc tạo. */
+function jobEndedAt(j: Job): number {
+  return new Date(j.finishedAt ?? j.createdAt).getTime();
+}
+
 /** Khung chờ của một stat tile - cao đúng bằng tile thật để hàng không nhảy. */
 const TILE_SKELETON = "h-28 w-full";
 
@@ -130,6 +154,20 @@ export default function DashboardPage() {
     null
   );
   const [jobs, setJobs] = useState<Job[] | null>(null);
+  // Đọc sau khi mount - render phía server không có localStorage
+  const [failedClearedAt, setFailedClearedAt] = useState(0);
+  useEffect(() => {
+    setFailedClearedAt(readFailedClearedAt());
+  }, []);
+  const clearFailedBanner = useCallback(() => {
+    const now = Date.now();
+    setFailedClearedAt(now);
+    try {
+      localStorage.setItem(FAILED_CLEARED_KEY, String(now));
+    } catch {
+      // localStorage bị chặn - vẫn ẩn được trong lần mở trang này
+    }
+  }, []);
   const [sessions, setSessions] = useState<ChatSession[] | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
 
@@ -150,7 +188,22 @@ export default function DashboardPage() {
 
   const loadSessions = useCallback(() => {
     getChatSessions()
-      .then(setSessions)
+      .then((list) => {
+        setSessions(list);
+        // Card "AI đang làm việc" chỉ sống nhờ event SSE: SSE rớt (backend
+        // restart, máy ngủ) đúng lúc phiên kết thúc thì event done không bao giờ
+        // tới và card kẹt mãi. Server báo phiên không còn chạy thì gỡ theo server.
+        const running = new Set(
+          list.filter((s) => s.status === "running").map((s) => s.sessionId)
+        );
+        setAgentActivities((m) => {
+          const stale = Object.keys(m).filter((sid) => !running.has(sid));
+          if (stale.length === 0) return m;
+          const next = { ...m };
+          for (const sid of stale) delete next[sid];
+          return next;
+        });
+      })
       .catch(() => setSessions([]));
   }, []);
 
@@ -372,8 +425,12 @@ export default function DashboardPage() {
   const todayFailed = todayJobs.filter((j) => j.status === "failed");
 
   // Job lỗi hôm nay - trước đây chỉ là một con số lẫn trong dòng phụ của tile,
-  // tức là thứ đáng xử lý nhất trên trang lại khó thấy nhất.
-  const failedRecent = [...todayFailed]
+  // tức là thứ đáng xử lý nhất trên trang lại khó thấy nhất. Job đã "Xóa khỏi
+  // trang chủ" thì bỏ khỏi banner; tile Job hôm nay vẫn đếm đủ (đó là số liệu).
+  const failedUncleared = todayFailed.filter(
+    (j) => jobEndedAt(j) > failedClearedAt
+  );
+  const failedRecent = [...failedUncleared]
     .sort(
       (a, b) =>
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -419,14 +476,25 @@ export default function DashboardPage() {
       {failedRecent.length > 0 && (
         <Banner
           tone="danger"
-          message={tf("dash.failed-today", { n: todayFailed.length })}
+          message={tf("dash.failed-today", { n: failedUncleared.length })}
           actions={
-            <Link href="/queue">
-              <Button variant="secondary" small>
-                <ListVideo size={14} strokeWidth={2} />
-                {t("dash.view-queue")}
+            <>
+              <Button
+                variant="secondary"
+                small
+                onClick={clearFailedBanner}
+                title={t("dash.failed-clear-hint")}
+              >
+                <X size={14} strokeWidth={2} />
+                {t("dash.failed-clear")}
               </Button>
-            </Link>
+              <Link href="/queue">
+                <Button variant="secondary" small>
+                  <ListVideo size={14} strokeWidth={2} />
+                  {t("dash.view-queue")}
+                </Button>
+              </Link>
+            </>
           }
         >
           <ul className="mt-1 flex flex-col gap-1">
@@ -670,13 +738,18 @@ export default function DashboardPage() {
                     <div className="flex min-w-0 items-baseline justify-between gap-2">
                       <Link
                         href={
-                          // auto-cut/text-to-video: projectId là id phiên của
-                          // trang riêng, không phải project video - link theo loại
+                          // auto-cut/text-to-video/translate-video: projectId là
+                          // id phiên của trang riêng, image-gen là image project -
+                          // không phải project video, link theo loại
                           job.type === "auto-cut"
                             ? `/auto-cut/${job.projectId}`
                             : job.type === "text-to-video"
                               ? `/text-to-video/${job.projectId}`
-                              : `/projects/${job.projectId}`
+                              : job.type === "translate-video"
+                                ? `/translate-video/${job.projectId}`
+                                : job.type === "image-gen"
+                                  ? `/images/${job.projectId}`
+                                  : `/projects/${job.projectId}`
                         }
                         className="truncate text-sm font-medium hover:text-[var(--primary)]"
                       >

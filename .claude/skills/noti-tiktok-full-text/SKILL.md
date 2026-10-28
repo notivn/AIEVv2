@@ -172,7 +172,7 @@ The exact `<audio id="sfx-*">` wiring is in "Wiring technique (HyperFrames)" bel
 
 ## ⚠️ ENVIRONMENT (Windows) + TRANSCRIPTION
 - Install FFmpeg with `winget install Gyan.FFmpeg`. The PATH change only applies to NEW shells → when calling `npx hyperframes` you must prepend the bin to `$env:Path` inline.
-- `npm install` at the repo root; `npx hyperframes browser ensure`.
+- Dependencies (npm packages, Chromium, faster-whisper in `.runtime/venv`, FFmpeg in `.runtime/bin`) are installed by `start/doctor.mjs` (the Doctor page). **Never run `npm install`, `pip install` or `winget` yourself** - the agent policy blocks them (see video-pipeline, "Agent sandbox"); if something is missing, stop and ask the user to run Doctor. `npx hyperframes browser ensure` is fine.
 - ⚠️ `npx hyperframes transcribe` needs an external `whisper-cpp` + an `.en` English-only model → do NOT use it for Vietnamese.
 - Vietnamese transcription: **faster-whisper** `large-v3`, `language="vi"`, `word_timestamps=True` (in Python: `sys.stdout.reconfigure(encoding="utf-8")`). Prefer `device="cuda", compute_type="float16"` (on a GTX 1660: twice as fast, and it frees the CPU), with a try/except fallback to `device="cpu", compute_type="int8"`. Extract the audio: `ffmpeg -i in.mp4 -vn -ac 1 -ar 16000 audio.wav`. Fix Whisper's misheard proper nouns (e.g. Anthopix→Anthropic, Cloudy→Claude).
 

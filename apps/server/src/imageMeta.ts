@@ -126,6 +126,17 @@ export function normOverlay(raw: unknown, base: ImageOverlay = defaultOverlay())
   return out;
 }
 
+/**
+ * background/final là TÊN FILE trần trong image-projects/<id>/ - nơi dùng ghép
+ * thẳng path.join(imageDirOf(id), x) để clone/stage cho Remotion. meta.json sửa
+ * tay kiểu "../../.env" mà lọt qua là chép file ngoài ra chỗ /media phát được.
+ */
+function plainFileName(v: unknown): string | null {
+  if (typeof v !== "string" || !v) return null;
+  if (v !== path.basename(v) || /[\\/:\0]/.test(v) || v.startsWith(".")) return null;
+  return v;
+}
+
 function normStatus(s: unknown): ImageStatus {
   return s === "generating" || s === "done" || s === "error" ? s : "draft";
 }
@@ -146,8 +157,8 @@ function normImageMeta(id: string, raw: unknown, mtimeIso: string): ImageProject
     model: typeof m.model === "string" && m.model ? m.model : null,
     styleId: typeof m.styleId === "string" && m.styleId ? m.styleId : null,
     overlay: normOverlay(m.overlay),
-    background: typeof m.background === "string" && m.background ? m.background : null,
-    final: typeof m.final === "string" && m.final ? m.final : null,
+    background: plainFileName(m.background),
+    final: plainFileName(m.final),
     error: typeof m.error === "string" && m.error ? m.error : null,
     createdAt: typeof m.createdAt === "string" && m.createdAt ? m.createdAt : mtimeIso,
     updatedAt: typeof m.updatedAt === "string" && m.updatedAt ? m.updatedAt : mtimeIso,

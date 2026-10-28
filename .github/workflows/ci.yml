@@ -3,6 +3,9 @@ name: CI
 # Chạy trên mọi push vào main và mọi Pull Request. Với PR từ người ngoài, hãy bật
 # Settings -> Actions -> "Require approval for all outside collaborators" để
 # workflow chỉ chạy sau khi bạn duyệt.
+#
+# KHÔNG BAO GIỜ đổi sang `pull_request_target`: trigger đó chạy với quyền và
+# secret của repo, mà checkout code của PR vào đó là trao repo cho người lạ.
 on:
   push:
     branches: [main]
@@ -13,26 +16,45 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Quyền tối thiểu: CI chỉ đọc code, không ghi gì lên repo
 permissions:
   contents: read
 
 jobs:
   check:
-    name: Typecheck and build
+    name: Typecheck and build (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 24 = LTS đang hoạt động (bản chính). 22 vẫn giữ vì engines cho phép
+        # >=22 (hyperframes đòi >=22). Ghi số major để luôn lấy bản vá mới nhất -
+        # đợt vá bảo mật Node 21/10/2026 cần >= 22.23.4 / 24.22.1.
+        node: [24, 22]
     steps:
-      - uses: actions/checkout@v5
-
-      # Node 22: hyperframes khai engines ">=22", thấp hơn là npm cảnh báo và
-      # một số API của nó không chạy
-      - uses: actions/setup-node@v5
+      # Action bên thứ ba ghim theo SHA đầy đủ (tag dời được, SHA thì không).
+      # Dependabot (.github/dependabot.yml) tự mở PR nâng SHA + comment phiên bản.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          node-version: 22
+          # Không để lại token GitHub trong .git/config cho các bước sau (npm ci
+          # chạy install script của dependency)
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ matrix.node }}
           cache: npm
 
       # npm ci (không phải npm install): cài đúng theo package-lock.json và
       # fail nếu lockfile lệch package.json - đúng thứ cần bắt ở PR
       - run: npm ci
+
+      # Advisory mới (mức high trở lên) trong dependency chạy thật thì CI đỏ.
+      # Chỉ chạy một lần (Node 24) - kết quả không phụ thuộc phiên bản Node.
+      - name: Audit production dependencies
+        if: matrix.node == 24
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Typecheck (server + web + remotion)
         run: npm run typecheck

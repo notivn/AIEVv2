@@ -5,8 +5,11 @@ import multer from "multer";
 import { paths } from "../config.js";
 import {
   COLOR_KEYS,
+  FONT_EXTS,
   HEX_RE,
+  LOGO_EXTS,
   defaultStyle,
+  isStyleFileRel,
   normStyleTags,
   readStyles,
   writeStyles,
@@ -29,10 +32,9 @@ const upload = multer({
     filename: (_req, _file, cb) => cb(null, `up-${Date.now()}-${Math.round(Math.random() * 1e9)}`),
   }),
   limits: { fileSize: 50 * 1024 * 1024 },
+  // Tên file multipart là UTF-8 thô - mặc định latin1 làm tên có dấu ra mojibake (xem routes/assets.ts)
+  defParamCharset: "utf8",
 });
-
-const LOGO_EXTS = new Set([".png", ".jpg", ".jpeg", ".svg", ".webp"]);
-const FONT_EXTS = new Set([".ttf", ".otf", ".woff", ".woff2"]);
 
 function findStyle(data: StylesFile, id: string): StyleDesign {
   const style = data.styles.find((s) => s.id === id);
@@ -161,7 +163,16 @@ router.put("/:id", (req, res) => {
     if (body.logoPath !== null && typeof body.logoPath !== "string") {
       throw new HttpError(400, "INVALID_LOGO_PATH", "logoPath phải là string hoặc null");
     }
-    style.logoPath = typeof body.logoPath === "string" && body.logoPath ? body.logoPath : null;
+    const logoPath = typeof body.logoPath === "string" && body.logoPath ? body.logoPath : null;
+    // Server sẽ chép file này vào project/stage cho Remotion - chỉ nhận ảnh nằm dưới assets/
+    if (logoPath && !isStyleFileRel(logoPath, LOGO_EXTS)) {
+      throw new HttpError(
+        400,
+        "INVALID_LOGO_PATH",
+        "logoPath phải là file ảnh nằm trong assets/ (vd assets/styles/files/logo.png) - tải logo lên qua nút Logo",
+      );
+    }
+    style.logoPath = logoPath;
   }
   if ("tone" in body) {
     if (typeof body.tone !== "string") {

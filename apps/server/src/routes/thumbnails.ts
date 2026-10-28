@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { Router } from "express";
 import { paths, repoRoot } from "../config.js";
-import { geminiApiKey, generateBackground } from "../gemini.js";
+import { ffmpegSafeArgs } from "../ffmpegSafe.js";
+import { generateImage, isImageProviderChoice, resolveProviders } from "../imageProviders/index.js";
 import {
   briefOf,
   listProjectAssets,
@@ -15,13 +16,13 @@ import {
 import { remotionGlArgs } from "../renderSettings.js";
 import { getStyle, styleExists } from "../styles.js";
 import { HttpError, ensureDir, execFileCapture, remotionCli } from "../util.js";
-import type { ImageAspect } from "../imageMeta.js";
+import { IMAGE_ASPECTS, type ImageAspect } from "../imageMeta.js";
 
 /**
  * Tạo THUMBNAIL cho video project - chạy ĐỒNG BỘ (~1 phút), pipeline:
  * 1) ffmpeg cắt một frame từ video (mặc định output final của meta,
  *    fallback video asset đầu tiên) tại giây `frameAt`
- * 2) Gemini vẽ nền theo Style Design (lỗi/thiếu key → bỏ qua, composition
+ * 2) AI vẽ nền theo Style Design qua imageProviders (lỗi/thiếu cấu hình → bỏ qua, composition
  *    tự dựng nền gradient từ style - như Poster)
  * 3) stage nền + frame + logo + font bằng hardlink → props.json →
  *    `npx remotion still Thumbnail` → video-projects/<id>/thumbnail.png
@@ -32,7 +33,7 @@ import type { ImageAspect } from "../imageMeta.js";
 const router = Router();
 
 // POST /api/projects/:id/thumbnail
-// { title, frameAt?: number (giây, default 1), sourceRel?, bgPrompt?, styleId? }
+// { title, frameAt?: number (giây, default 1), sourceRel?, bgPrompt?, styleId?, provider? }
 // → 201 { file: "thumbnail.png", relPath }
 router.post("/:id/thumbnail", async (req, res) => {
   const id = req.params.id;
@@ -75,6 +76,12 @@ router.post("/:id/thumbnail", async (req, res) => {
   const sourceRel = typeof body.sourceRel === "string" ? body.sourceRel.trim() : "";
   if (sourceRel) {
     const abs = resolveInRepo(sourceRel, "sourceRel");
+    // Video nguồn chỉ được là file của chính project hoặc bản đã xuất ở outputs/ -
+    // "trong repo" là quá rộng (.env, data/*.db cũng nằm trong repo)
+    const inside = (dir: string): boolean => abs.startsWith(path.resolve(dir) + path.sep);
+    if (!inside(projectDir) && !inside(paths.outputsDir)) {
+      throw new HttpError(400, "PATH_OUTSIDE_PROJECT", `sourceRel "${sourceRel}" phải nằm trong project hoặc outputs/`);
+    }
     if (!fs.existsSync(abs)) {
       throw new HttpError(404, "SOURCE_NOT_FOUND", `Không thấy video nguồn "${sourceRel}"`);
     }
@@ -108,7 +115,7 @@ router.post("/:id/thumbnail", async (req, res) => {
   try {
     await execFileCapture(
       "ffmpeg",
-      ["-y", "-ss", String(frameAt), "-i", videoAbs, "-frames:v", "1", "-q:v", "2", frameAbs],
+      ffmpegSafeArgs(["-y", "-ss", String(frameAt), "-i", videoAbs, "-frames:v", "1", "-q:v", "2", frameAbs]),
       { timeoutMs: 60_000 },
     );
   } catch (err) {
@@ -126,14 +133,30 @@ router.post("/:id/thumbnail", async (req, res) => {
     );
   }
 
-  // ---- 2) Gemini vẽ nền theo Style Design (fail-soft: không nền vẫn tiếp tục)
+  // ---- 2) AI vẽ nền theo Style Design (fail-soft: không nền vẫn tiếp tục)
+  // Nhà cung cấp: body.provider → mặc định ở trang Kết nối ("auto"). Route này
+  // chạy ĐỒNG BỘ nên chỉ dùng nhà cung cấp đã cấu hình; gateway web chậm thì
+  // request chờ theo - lỗi/thiếu cấu hình thì rơi về nền gradient như cũ.
   const design = getStyle(styleId || briefOf(meta).styleId || null);
-  const aspect: ImageAspect = meta.height >= meta.width ? "9:16" : "16:9";
+  // Tỉ lệ khung GẦN NHẤT với video: chỉ chia dọc/ngang thì project 1:1 hay 4:5
+  // (tái chế tỉ lệ khung) ra thumbnail 1080x1920 lệch hẳn khung của video
+  const ratio = Number(meta.width) / Number(meta.height);
+  const ratioOf = (a: ImageAspect): number => {
+    const [w, h] = a.split(":").map(Number);
+    return w / h;
+  };
+  const aspect: ImageAspect =
+    Number.isFinite(ratio) && ratio > 0
+      ? IMAGE_ASPECTS.reduce((best, a) =>
+          Math.abs(ratioOf(a) - ratio) < Math.abs(ratioOf(best) - ratio) ? a : best,
+        )
+      : "9:16";
   const bgAbs = path.join(rendersDir, "thumb-bg.png");
   let hasBg = false;
-  if (geminiApiKey()) {
+  const provider = isImageProviderChoice(body.provider) ? body.provider : undefined;
+  if (resolveProviders(provider, null).chain.length > 0) {
     try {
-      await generateBackground({
+      await generateImage({
         prompt: bgPrompt || `background for a video thumbnail about: ${title}`,
         kind: "concept",
         aspect,
@@ -141,11 +164,12 @@ router.post("/:id/thumbnail", async (req, res) => {
         allowText: false,
         outFile: bgAbs,
         usageProjectId: id,
+        provider,
       });
       hasBg = true;
     } catch (err) {
       console.warn(
-        `[thumbnail] Gemini lỗi - dùng nền gradient từ style: ${err instanceof Error ? err.message : String(err)}`,
+        `[thumbnail] Tạo nền AI lỗi - dùng nền gradient từ style: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

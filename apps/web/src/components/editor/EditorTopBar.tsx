@@ -2,8 +2,11 @@
 
 /**
  * Thanh trên của trình chỉnh sửa: về project · tên · trạng thái lưu ·
- * hoàn tác/làm lại · tiến trình render + link bản ra · Render draft/final ·
- * menu "Thêm".
+ * hoàn tác/làm lại · tiến trình render + link bản ra · Giao cho AI · Render
+ * draft · Xuất video (nút chính = render final qua queue) · menu "Thêm".
+ *
+ * `aiReview` có giá trị = vừa xong một lượt "Giao cho AI": hiện banner duyệt
+ * ngay dưới thanh (Giữ / Hoàn tác / Xem lịch sử) - docs/EDITOR-V2-PLAN.md §2.8.
  *
  * Menu "Thêm" là KHE MỞ RỘNG: trang truyền mảng `menuItems`, thanh trên chỉ vẽ.
  * Giai đoạn 3 (lịch sử phiên bản, xuất XML Premiere/DaVinci…) thêm mục vào mảng
@@ -17,11 +20,14 @@ import {
   Play,
   Redo2,
   RefreshCw,
+  Sparkles,
   Undo2,
+  Upload,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Badge, type BadgeTone } from "@/components/Badge";
+import { Banner } from "@/components/Banner";
 import { Button } from "@/components/Button";
 import { IconButton } from "@/components/IconButton";
 import { LinkButton } from "@/components/LinkButton";
@@ -39,6 +45,17 @@ export interface EditorMenuItem {
   disabled?: boolean;
   /** Dòng chú thích nhỏ dưới nhãn (vd giới hạn của tính năng) */
   hint?: string;
+}
+
+/** Banner duyệt sau một lượt "Giao cho AI" */
+export interface EditorAiReview {
+  /** Giữ kết quả của AI (đóng banner) */
+  onKeep: () => void;
+  /** Khôi phục revision `ai-before` mới nhất */
+  onUndo: () => void;
+  onHistory: () => void;
+  /** Đang hoàn tác - khóa các nút */
+  busy?: boolean;
 }
 
 const SAVE_TONE: Record<SaveState, BadgeTone> = {
@@ -68,6 +85,10 @@ export function EditorTopBar({
   renderDisabled,
   onRender,
   menuItems,
+  onHandoff,
+  handoffDisabled = false,
+  onExport,
+  aiReview,
 }: {
   projectId: string;
   name: string;
@@ -88,6 +109,13 @@ export function EditorTopBar({
   renderDisabled: boolean;
   onRender: (quality: "draft" | "final") => void;
   menuItems: EditorMenuItem[];
+  /** Mở hộp thoại "Giao cho AI". Bỏ trống = ẩn nút */
+  onHandoff?: () => void;
+  /** Khóa nút Giao cho AI (AI đang chạy, timeline xung đột…) */
+  handoffDisabled?: boolean;
+  /** "Xuất video" = render final qua queue. Bỏ trống = onRender("final") */
+  onExport?: () => void;
+  aiReview?: EditorAiReview | null;
 }) {
   const { t, tf } = useT();
   const saveLabel: Record<SaveState, string> = {
@@ -114,6 +142,7 @@ export function EditorTopBar({
   };
 
   return (
+    <>
     <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <LinkButton
@@ -175,6 +204,18 @@ export function EditorTopBar({
       )}
 
       <div className="flex items-center gap-2">
+        {onHandoff && (
+          <Button
+            variant="secondary"
+            small
+            disabled={handoffDisabled}
+            onClick={onHandoff}
+            title={t("editor.handoff.button-hint")}
+          >
+            <Sparkles size={14} strokeWidth={2} />
+            {t("editor.handoff.button")}
+          </Button>
+        )}
         <Button
           variant="secondary"
           small
@@ -188,15 +229,38 @@ export function EditorTopBar({
         <Button
           small
           disabled={renderBusy || renderDisabled}
-          onClick={() => onRender("final")}
-          title={t("editor.render.final-hint")}
+          onClick={() => (onExport ? onExport() : onRender("final"))}
+          title={t("editor.review.export-hint")}
         >
-          <Play size={14} strokeWidth={2} />
-          {t("editor.render.final")}
+          <Upload size={14} strokeWidth={2} />
+          {t("editor.review.export")}
         </Button>
         <EditorMenu items={menuItems} />
       </div>
     </div>
+    {aiReview && (
+      <Banner
+        tone="success"
+        message={t("editor.review.title")}
+        actions={
+          <>
+            <Button small disabled={aiReview.busy} onClick={aiReview.onKeep}>
+              {t("editor.review.keep")}
+            </Button>
+            <Button variant="secondary" small disabled={aiReview.busy} onClick={aiReview.onUndo}>
+              <Undo2 size={14} strokeWidth={2} />
+              {aiReview.busy ? t("editor.review.undoing") : t("editor.review.undo")}
+            </Button>
+            <Button variant="secondary" small disabled={aiReview.busy} onClick={aiReview.onHistory}>
+              {t("editor.review.history")}
+            </Button>
+          </>
+        }
+      >
+        <p className="mt-1 text-meta text-[var(--text-muted)]">{t("editor.review.body")}</p>
+      </Banner>
+    )}
+    </>
   );
 }
 

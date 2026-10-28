@@ -2,6 +2,7 @@
 
 import { X } from "lucide-react";
 import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { IconButton } from "@/components/IconButton";
 import { useT } from "@/lib/i18n";
 
@@ -25,6 +26,10 @@ import { useT } from "@/lib/i18n";
  *   Enter ngay sau khi mở không được là "đóng"), không có thì chính hộp thoại;
  * - Tab / Shift+Tab xoay vòng TRONG modal, không lọt ra trang phía sau;
  * - đóng: trả focus về phần tử đã mở modal (nếu nó còn trên trang).
+ *
+ * Modal render qua portal thẳng vào <body>: đặt tại chỗ thì z-50 bị nhốt trong
+ * stacking context của tổ tiên (chân sidebar sticky z-index 1 từng làm khung
+ * chọn z-[5] của trình chỉnh sửa đè lên UpdateModal, không bấm được gì).
  */
 
 const FOCUSABLE =
@@ -119,9 +124,9 @@ export function Modal({
     }
   };
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--text)]/40 p-4"
       onMouseDown={(e) => {
@@ -152,6 +157,7 @@ export function Modal({
           <div className="mt-5 flex justify-end gap-2">{footer}</div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

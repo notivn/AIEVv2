@@ -148,8 +148,10 @@ async function stepTranscribe(ctx: JobCtx, id: string): Promise<void> {
       speakers: res.speakers,
       wordTimestamps: res.wordTimestamps,
     },
-    // Phiên để "auto" thì ghi lại ngôn ngữ ĐÃ DÙNG - lần dịch sau khỏi đoán
-    ...(meta.sourceLang === "auto" ? { sourceLang: res.language } : {}),
+    // Phiên để "auto" thì ghi lại ngôn ngữ ĐÃ DÙNG - lần dịch sau khỏi đoán.
+    // "und" (provider không dò ra) thì GIỮ "auto": ghi "und" vào là bước dịch
+    // dặn model dịch "from und", và lần bóc lời sau gửi "und" cho whisper/Soniox
+    ...(meta.sourceLang === "auto" && res.language !== "und" ? { sourceLang: res.language } : {}),
   });
 
   ctx.progress(88, "Chia câu phụ đề");
@@ -161,7 +163,9 @@ async function stepTranscribe(ctx: JobCtx, id: string): Promise<void> {
   }
   ctx.log(`[translate] ${cues.length} câu phụ đề gốc, sẵn sàng để dịch`);
 
-  patchTranslateVideo(id, { cues, status: "transcribed", error: null });
+  // Câu mới thay hết câu cũ (kể cả bản dịch) - video ghép từ câu cũ không còn
+  // khớp, cùng luật với PATCH cues: gỡ khỏi phiên để trang không hiện nó như thành phẩm
+  patchTranslateVideo(id, { cues, outputFile: null, status: "transcribed", error: null });
   ctx.progress(100, `Đã bóc ${cues.length} câu`);
 }
 

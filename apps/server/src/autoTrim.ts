@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { paths } from "./config.js";
+import { ffmpegSafeArgs, ffprobeSafeArgs } from "./ffmpegSafe.js";
 import { HttpError, audioCutFade, ensureDir, execFileCaptureAll } from "./util.js";
 
 /**
@@ -209,7 +210,7 @@ async function runFfmpeg(
 ): Promise<string> {
   let r: Awaited<ReturnType<typeof execFileCaptureAll>>;
   try {
-    r = await execFileCaptureAll("ffmpeg", ["-hide_banner", "-nostats", "-y", ...args], {
+    r = await execFileCaptureAll("ffmpeg", ffmpegSafeArgs(["-hide_banner", "-nostats", "-y", ...args]), {
       timeoutMs: opts.timeoutMs ?? 120_000,
       isCanceled: opts.isCanceled,
     });
@@ -234,7 +235,7 @@ async function runFfmpeg(
 async function runFfprobe(args: string[], isCanceled?: () => boolean): Promise<string> {
   let r: Awaited<ReturnType<typeof execFileCaptureAll>>;
   try {
-    r = await execFileCaptureAll("ffprobe", ["-v", "error", ...args], {
+    r = await execFileCaptureAll("ffprobe", ffprobeSafeArgs(["-v", "error", ...args]), {
       timeoutMs: 30_000,
       isCanceled,
     });
@@ -826,8 +827,11 @@ export function buildTrimFilter(
   const parts: string[] = [];
   const labels: string[] = [];
   keepRanges.forEach(([s, e], i) => {
-    const from = s.toFixed(3);
-    const to = e.toFixed(3);
+    // 6 chữ số = đúng độ phân giải µs của tham số trim/atrim. Làm tròn tới ms
+    // thì audio mỗi mảnh lệch video tới 1ms, concat lấy mảnh dài hơn nên phần
+    // lệch dồn dần theo số mối nối (xem alignKeepRangesToFrames).
+    const from = s.toFixed(6);
+    const to = e.toFixed(6);
     if (hasVideo) {
       parts.push(`[0:v]trim=start=${from}:end=${to},setpts=PTS-STARTPTS[v${i}]`);
     }
@@ -855,10 +859,93 @@ export function buildTrimFilter(
  * Trên 24000 ký tự thì đẩy filter qua file (-/filter_complex).
  *
  * Windows giới hạn dòng lệnh ~32767 ký tự và ffmpeg ĐỨT NGANG chứ không báo
- * lỗi rõ ràng khi vượt. Mỗi mảnh keep tốn ~110 ký tự, nên khoảng 200 mảnh trở
- * lên là chạm trần - hoàn toàn có thật với video 20 phút cắt mức tight.
+ * lỗi rõ ràng khi vượt. Mỗi mảnh keep tốn ~200 ký tự (tính cả afade), nên khoảng
+ * 120 mảnh trở lên là chạm trần - hoàn toàn có thật với video 20 phút cắt mức tight.
  */
 const FILTER_INLINE_MAX = 24_000;
+
+/**
+ * Dời mép mỗi đoạn giữ về KHE GIỮA HAI FRAME video bao quanh nó.
+ *
+ * Vì sao: `trim` của video chỉ lấy được nguyên frame, còn `atrim` cắt audio tới
+ * từng mẫu - một mảnh 0,500s ở 30fps có thể ra 15 hoặc 16 frame. `concat` lấy
+ * luồng DÀI HƠN làm độ dài mảnh (bù lặng vào audio), nên mỗi mối nối dôi ra
+ * trung bình vài ms và dồn dần. Đo trên clip tổng hợp: 216 mảnh dôi 1,17s, 356
+ * mảnh (29,97fps) dôi 1,8s - transcript dời mốc theo độ dài đoạn giữ nên phụ đề
+ * cuối video chạy SỚM hơn tiếng gần 2 giây. Mép nằm giữa hai frame thì video
+ * lấy ĐÚNG các frame như khi chưa dời, còn audio dài bằng đúng số frame đó (đo
+ * lại sau khi dời: cùng số frame như trước, tổng độ dài khớp transcript tới 1 frame).
+ *
+ * Mốc frame lấy từ pts của packet trừ start_time của file - đúng hệ thời gian
+ * filter_complex nhìn thấy - nên VFR cũng khớp. Không đọc được thì trả nguyên
+ * danh sách cũ: lệch vài ms mỗi mối nối vẫn hơn là không cắt được.
+ *
+ * Bên gọi PHẢI dùng chính danh sách trả về cho cả applyTrim lẫn
+ * remapWordTimestamps - hai nơi dùng hai danh sách khác nhau là phụ đề lệch.
+ */
+export async function alignKeepRangesToFrames(
+  fileAbs: string,
+  keepRanges: Array<[number, number]>,
+  opts?: { isCanceled?: () => boolean; onLog?: (l: string) => void },
+): Promise<Array<[number, number]>> {
+  const log = opts?.onLog ?? ((): void => {});
+  // Một mảnh thì không có mối nối nào để dôi
+  if (keepRanges.length < 2) return keepRanges;
+  let r: Awaited<ReturnType<typeof execFileCaptureAll>> | null = null;
+  try {
+    r = await execFileCaptureAll(
+      "ffprobe",
+      ffprobeSafeArgs([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "packet=pts_time:format=start_time",
+        "-of",
+        "csv",
+        fileAbs,
+      ]),
+      // Chỉ đọc packet, không giải mã - file vài GB cũng vài giây, ổ chậm thì cho dư
+      { timeoutMs: 300_000, isCanceled: opts?.isCanceled },
+    );
+  } catch {
+    r = null;
+  }
+  if (r?.canceled) throw new Error("Job đã bị hủy");
+  let startTime = 0;
+  const frames: number[] = [];
+  for (const line of (r?.stdout ?? "").split(/\r?\n/)) {
+    const [kind, value] = line.trim().split(",");
+    const n = parseFloat(value ?? "");
+    if (!Number.isFinite(n)) continue;
+    if (kind === "packet") frames.push(n);
+    else if (kind === "format") startTime = n;
+  }
+  if (!r || r.timedOut || r.code !== 0 || frames.length < 2) {
+    log("[trim] Không đọc được mốc frame video - giữ nguyên mép đoạn (mỗi mối nối có thể lệch vài ms).");
+    return keepRanges;
+  }
+  const f = frames.map((t) => t - startTime).sort((a, b) => a - b);
+  const snap = (b: number): number => {
+    // max(0, ...): packet bị edit list bỏ đi có pts âm - đầu file thì giữ nguyên mốc 0
+    if (b <= Math.max(0, f[0]) || b > f[f.length - 1]) return b;
+    // Frame đầu tiên có mốc >= b: trim=start=b lấy từ frame này, trim=end=b
+    // dừng ngay trước nó - nên khe giữa nó và frame trước cho ra đúng các frame cũ
+    let lo = 1;
+    let hi = f.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (f[mid] < b) lo = mid + 1;
+      else hi = mid;
+    }
+    return (f[lo - 1] + f[lo]) / 2;
+  };
+  const out = keepRanges
+    .map(([s, e]): [number, number] => [snap(s), snap(e)])
+    .filter(([s, e]) => e - s >= MIN_PIECE_SEC);
+  return out.length > 0 ? out : keepRanges;
+}
 
 /**
  * Cắt thật: một lượt ffmpeg, encode lại sạch sẽ.
@@ -1037,6 +1124,17 @@ function survives(
   return false;
 }
 
+/** Bao nhiêu giây của [a,b] còn nằm trong các đoạn giữ */
+function keptPart(
+  a: number,
+  b: number,
+  ranges: Array<{ start: number; end: number; offset: number }>,
+): number {
+  let sum = 0;
+  for (const r of ranges) sum += Math.max(0, Math.min(b, r.end) - Math.max(a, r.start));
+  return sum;
+}
+
 /**
  * Dời toàn bộ timestamp của transcript sang hệ thời gian của file ĐÃ CẮT.
  *
@@ -1068,6 +1166,11 @@ export function remapWordTimestamps<T>(transcript: T, keepRanges: Array<[number,
         const we = typeof w.end === "number" ? w.end : ws;
         if (ws === null || we === null) continue;
         if (!survives(ws, we, ranges)) continue;
+        // Chữ bị cắt gần hết chỉ còn một mẩu vài ms (mép đoạn giữ đã dời về khe
+        // frame, hoặc ứng viên làm tròn 2 chữ số lệch mép chữ): giữ lại là phụ đề
+        // hiện đúng chữ người duyệt đã bỏ. Đo được: từ đệm "Ừm" đã cắt vẫn sống
+        // thành một chữ 5ms trong transcript.cut.json.
+        if (we > ws && keptPart(ws, we, ranges) < (we - ws) / 2) continue;
         const ns = mapTime(ws, ranges, "start");
         const ne = mapTime(we, ranges, "end");
         if (ns === null || ne === null) continue;

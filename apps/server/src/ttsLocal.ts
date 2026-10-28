@@ -122,11 +122,22 @@ interface ProbeData {
 let cachedPython: string | null = null;
 let probeCache: { at: number; status: LocalEngineStatus } | null = null;
 /**
- * Lỗi nạp model gần nhất. Dính lại cho tới khi có ai đó dò lại với force -
- * người dùng bấm "Kiểm tra lại" trên web là hết. Nếu không dính, UI sẽ báo
- * "sẵn sàng" ngay sau một lần nạp hỏng vì phép dò chỉ kiểm import.
+ * Lỗi nạp model gần nhất. Dính lại để UI không báo "sẵn sàng" ngay sau một lần
+ * nạp hỏng (phép dò chỉ kiểm import) - nhưng CHỈ trong LOAD_FAILURE_TTL_MS, hoặc
+ * tới khi dò lại với force (GET /api/tts/engines?refresh=1, nút "Kiểm tra lại").
+ *
+ * ĐÃ GẶP THẬT: bản đầu dính VĨNH VIỄN mà không route nào gọi force, nên một lần
+ * nạp hỏng tạm thời (model tải dở lần đầu) chặn mọi lời gọi VieNeu tới khi khởi
+ * động lại server - kể cả khi model đã nạp được bình thường, và agent đang dựng
+ * video không có cách nào tự gỡ.
  */
-let loadFailure: string | null = null;
+let loadFailure: { message: string; at: number } | null = null;
+const LOAD_FAILURE_TTL_MS = 2 * 60 * 1000;
+
+function activeLoadFailure(): string | null {
+  if (loadFailure && Date.now() - loadFailure.at > LOAD_FAILURE_TTL_MS) loadFailure = null;
+  return loadFailure?.message ?? null;
+}
 
 /** Vài dòng cuối stderr - đủ hiểu lỗi mà không nhấn chìm log */
 function tail(text: string, lines = 8): string {
@@ -190,6 +201,8 @@ export async function probeLocalEngine(force = false): Promise<LocalEngineStatus
     cachedPython = null;
     loadFailure = null;
   }
+  // Cờ lỗi vừa hết hạn thì bản cache (đang nói "không nạp được") cũng phải bỏ
+  if (probeCache?.status.reason === "LOAD_FAILED" && !activeLoadFailure()) probeCache = null;
   if (probeCache && Date.now() - probeCache.at < PROBE_CACHE_MS) return probeCache.status;
 
   // Thứ tự: PYTHON_BIN người dùng chỉ định (cửa thoát, luôn thắng) → venv trong
@@ -256,12 +269,13 @@ export async function probeLocalEngine(force = false): Promise<LocalEngineStatus
 
   // Nạp hỏng thì đè lên mọi kết luận lạc quan phía trên: import được không có
   // nghĩa là dựng được model (thiếu chỗ trống, tải dở file trong cache HuggingFace...).
-  if (status.available && loadFailure) {
+  const failure = activeLoadFailure();
+  if (status.available && failure) {
     status = {
       available: false,
       canClone: false,
       reason: "LOAD_FAILED",
-      detail: `Không nạp được model VieNeu: ${loadFailure}`,
+      detail: `Không nạp được model VieNeu: ${failure}`,
     };
   }
 
@@ -307,8 +321,16 @@ const pending = new Map<number, PendingReq>();
  * add_voice(save=False) chỉ nằm trong RAM, worker chết là mất sạch. Xóa set này
  * mỗi lần worker thoát, nếu không thì lần sau sẽ bỏ qua bước đăng ký và tổng
  * hợp báo "voice not found".
+ *
+ * Phần tử là registrationKey() (id + createdAt), KHÔNG chỉ id: xóa giọng rồi
+ * nhân bản lại CÙNG TÊN thì makeId (voiceStore.ts) trả lại đúng id cũ - nhớ theo
+ * id thì worker còn sống bỏ qua bước đăng ký và đọc bằng mẫu CŨ đã xóa.
  */
 const registeredInWorker = new Set<string>();
+
+function registrationKey(v: ClonedVoice): string {
+  return `${v.id}@${v.createdAt}`;
+}
 /** Worker này đã nạp xong model chưa - dùng để bớt phần thời gian chờ tải model */
 let workerHasModel = false;
 let idleTimer: NodeJS.Timeout | null = null;
@@ -460,6 +482,8 @@ function sendCommand(payload: Record<string, unknown>, opts: SendOpts, python: s
     const id = nextReqId++;
     const timer = setTimeout(() => {
       pending.delete(id);
+      // Vòng dò hủy phải dừng cùng: nó chỉ tự thoát khi pending còn id này
+      if (cancelTimer) clearInterval(cancelTimer);
       // Không có cách nào cắt ngang một lần infer đang chạy - phải giết tiến
       // trình. Lần sau sẽ nạp lại model (~15s), đắt nhưng còn hơn treo mãi.
       stopWorker("yêu cầu quá thời gian");
@@ -530,7 +554,7 @@ function toError(res: WorkerRes): Error {
     return new HttpError(404, "CLONE_REF_MISSING", `Không đọc được file mẫu của giọng: ${message}`);
   }
   if (code === "NO_VIENEU" || code === "LOAD_FAILED") {
-    loadFailure = message;
+    loadFailure = { message, at: Date.now() };
     probeCache = null;
     return new HttpError(503, "LOAD_FAILED", `Không nạp được model VieNeu: ${message}`);
   }
@@ -697,7 +721,7 @@ export async function listLocalVoices(): Promise<TtsVoice[]> {
 async function ensureRegistered(voice: string, opts: { onLog?: (l: string) => void }): Promise<boolean> {
   const rec = getClonedVoice(voice);
   if (!rec) return false; // giọng dựng sẵn
-  if (registeredInWorker.has(rec.id)) return true;
+  if (registeredInWorker.has(registrationKey(rec))) return true;
 
   const status = await probeLocalEngine();
   if (!status.canClone) {
@@ -716,7 +740,7 @@ async function ensureRegistered(voice: string, opts: { onLog?: (l: string) => vo
     { cmd: "register", voice: rec.id, ref: refAbs },
     { timeoutMs: loadBudget() + REGISTER_TIMEOUT_MS, onLog: opts.onLog },
   );
-  registeredInWorker.add(rec.id);
+  registeredInWorker.add(registrationKey(rec));
   return true;
 }
 
@@ -749,7 +773,8 @@ async function synthToFile(input: {
     // lại; hỏng tiếp thì mới là lỗi thật.
     const lost = err instanceof HttpError && err.code === "VOICE_NOT_FOUND";
     if (!isCloned || !lost) throw err;
-    registeredInWorker.delete(voice);
+    const rec = getClonedVoice(voice);
+    if (rec) registeredInWorker.delete(registrationKey(rec));
     await ensureRegistered(voice, { onLog: input.onLog });
     res = await send();
   }

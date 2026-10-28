@@ -23,11 +23,19 @@ export const metadata: Metadata = {
 /** Chống FOUC: áp data-theme trước khi paint. Mặc định light. */
 const THEME_SCRIPT = `try{if(localStorage.getItem("theme")==="dark")document.documentElement.setAttribute("data-theme","dark")}catch(e){}`;
 
+/**
+ * Link tunnel `?t=<token>`: cất token vào localStorage (khóa TOKEN_KEY của
+ * lib/api.ts) rồi gỡ khỏi thanh địa chỉ NGAY trước khi paint - đợi tới lúc
+ * ensureToken() chạy thì URL có token đã nằm trên màn hình và trong lịch sử.
+ * Ghi localStorage hỏng thì để nguyên ?t= cho ensureToken() tự xử lý.
+ */
+const TOKEN_URL_SCRIPT = `try{var u=new URL(location.href),t=u.searchParams.get("t");if(t&&!u.searchParams.get("k")){localStorage.setItem("aiev_api_token",t);u.searchParams.delete("t");history.replaceState(history.state,"",u.pathname+u.search+u.hash)}}catch(e){}`;
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="vi" suppressHydrationWarning>
       <body>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: TOKEN_URL_SCRIPT + THEME_SCRIPT }} />
         <StaleChunkGuard />
         <LanguageProvider>
           <EventsProvider>

@@ -71,9 +71,12 @@ export function formatJobDuration(
 export function formatDurationMs(ms: number | null): string {
   if (ms == null || !Number.isFinite(ms)) return "-";
   const sec = ms / 1000;
-  if (sec < 60) return `${sec.toFixed(1)}s`;
-  const min = Math.floor(sec / 60);
-  return `${min}${FORMAT_LANG === "en" ? "m" : "p"} ${Math.round(sec % 60)}s`;
+  // 59.95s trở lên toFixed(1) đã ra "60.0s" - sang nhánh phút
+  if (sec < 59.95) return `${sec.toFixed(1)}s`;
+  // Làm tròn TỔNG số giây trước rồi mới tách phút: tách trước thì 119.6s ra "1p 60s"
+  const total = Math.round(sec);
+  const min = Math.floor(total / 60);
+  return `${min}${FORMAT_LANG === "en" ? "m" : "p"} ${total % 60}s`;
 }
 
 /** Số token gọn: 950 → "950", 1234 → "1.2K", 3400000 → "3.4M". */
@@ -135,4 +138,21 @@ export function clock(sec: number): string {
 export function isRecentFile(mtime: string, windowMs = 3 * 60_000): boolean {
   const t = new Date(mtime).getTime();
   return Number.isFinite(t) && Date.now() - t < windowMs;
+}
+
+/**
+ * URL lấy từ NỘI DUNG BÊN NGOÀI (canonical của bài báo, link trong dữ liệu AI
+ * sinh ra) → chỉ trả lại khi là http(s), ngược lại null. Trang lạ đặt
+ * `<link rel="canonical" href="javascript:...">` là chuyện làm được; React 19
+ * có chặn `javascript:` trong href, nhưng không chặn `data:`/scheme khác và
+ * không chặn khi URL đi vào window.open - lọc ngay ở chỗ render cho chắc.
+ */
+export function httpUrlOrNull(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+  } catch {
+    return null;
+  }
 }

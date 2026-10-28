@@ -15,6 +15,9 @@
  *   "Tải bản mới" / "Giữ bản của tôi", lỗi validate → banner trỏ thẳng phần tử;
  * - chỉ đọc khi AI đang chạy trên project (lock.agentBusy + SSE agent);
  * - render draft/final qua render queue (lưu nốt thay đổi trước khi xếp job);
+ * - thả FILE từ máy vào bất kỳ đâu: tải tuần tự vào assets (tiến độ theo SSE
+ *   `upload`), thả lên track Video/Layer/SFX thì chèn luôn vào đó;
+ * - sao chép/dán (Ctrl+C/V tại playhead), đổi lớp layer (Ctrl+] / Ctrl+[);
  * - phím tắt (không bao giờ khi đang gõ trong ô nhập).
  */
 
@@ -27,6 +30,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Banner } from "@/components/Banner";
@@ -42,8 +46,10 @@ import {
   getJobs,
   getMediaInfo,
   getTimeline,
+  getTimelineRevisions,
   importLibraryFile,
   restoreTimelineRevision,
+  uploadAsset,
   saveTimeline,
   saveTimelineOnLeave,
   startEditorRender,
@@ -58,49 +64,104 @@ import {
   type TimelineLock,
   type TimelinePreview,
   type TimelineProject,
+  type TimelineScene,
 } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import { useAgentEvents, useEvents, useJobEvents } from "@/lib/useEvents";
+import { useAgentEvents, useEvents, useJobEvents, useUploadEvents } from "@/lib/useEvents";
+import { ProgressBar } from "@/components/ProgressBar";
+import { AiImagePanel, type AiImagePurpose } from "./AiImagePanel";
+import { CanvasOverlay, type CanvasTarget } from "./CanvasOverlay";
 import { EditorChat } from "./EditorChat";
 import { EditorContext, type EditorApi, type EditOptions } from "./EditorContext";
-import { EditorTopBar, type EditorMenuItem, type SaveState } from "./EditorTopBar";
+import { EditorTopBar, type EditorAiReview, type EditorMenuItem, type SaveState } from "./EditorTopBar";
+import { HandoffModal } from "./HandoffModal";
 import { EditorErrorBoundary } from "./EditorErrorBoundary";
 import { EDITOR_OVERWRITE_LABEL, HistoryModal, type RestoreOutcome } from "./HistoryModal";
-import { Inspector, type InspectorActions } from "./Inspector";
-import { dropTracksOf, type DropTarget, type LibraryItem } from "./library";
+import { Inspector, primaryTextFieldId, type InspectorActions } from "./Inspector";
+import {
+  dropTracksOf,
+  fileKindOf,
+  isFileDrag,
+  projectRelPath,
+  type DropTarget,
+  type LibraryItem,
+} from "./library";
 import { LibraryPanel, libraryItemKey } from "./LibraryPanel";
 import {
   addCue,
+  addLayer,
+  addLayerKeyframe,
   addScene,
+  insertSceneAtFrame,
   addSfx,
+  applyLayerCanvasTransform,
   canDelete,
   canDuplicate,
   canSplitScene,
+  CUE_KIND,
   contextFromPreview,
+  copySelection,
   deleteSelection,
   duplicateSelection,
   isCueSel,
+  layerById,
+  layerIdFromFile,
+  layersOf,
+  layerValuesAt,
+  moveLayerZ,
   moveSceneBy,
   newCuePlacement,
+  newFillerScene,
   newFootageScene,
   newImageScene,
+  newLayerId,
+  newLayerPlacement,
+  newMediaLayer,
+  newShapeLayer,
+  newTextLayer,
+  NEW_LAYER_SEC,
+  NEW_LAYER_VIDEO_FALLBACK_SEC,
   normalizeTimeline,
+  pasteClipboard,
+  patchLayer,
+  patchScene,
+  removeLayerKeyframe,
   sceneIdFromFile,
   sceneIndexById,
   sceneInsertIndexAt,
+  setCueTransform,
   setMusic,
   splitAtPlayhead,
+  type ClipboardEntry,
   type NewCue,
   type Selection,
+  type TimelineLayer,
 } from "./ops";
 import { createPlaybackStore } from "./playback";
 import { PreviewPlayer, type PlayerRef } from "./PreviewPlayer";
 import { ShortcutsModal } from "./ShortcutsModal";
-import { changedKeysPatch, editorReducer, initialEditorState, isDirty, type SaveProblem } from "./store";
-import { TimelinePanel, type AddCueKind } from "./TimelinePanel";
+import {
+  changedKeysPatch,
+  editorReducer,
+  initialEditorState,
+  isDirty,
+  TYPING_COALESCE_MS,
+  type SaveProblem,
+} from "./store";
+import { TimelinePanel, type AddCueKind, type AddLayerKind } from "./TimelinePanel";
+import { lockedChange, TRACK_LABEL_KEY, trackOfSelection, useTrackLocks, type LockableTrack } from "./locks";
+import {
+  jobWhat,
+  spokenContextAt,
+  TimelineAiPopover,
+  useTimelineAiJobs,
+  type TimelineAiAnchor,
+  type TimelineAiJob,
+  type TimelineAiMode,
+} from "./TimelineAi";
 import { Transport } from "./Transport";
-import { computeSceneSpans, totalFramesOf } from "./timing";
+import { computeSceneSpans, formatSeconds, totalFramesOf } from "./timing";
 
 /** Tự lưu sau khi người dùng ngừng sửa ngần này (ms) */
 const AUTOSAVE_MS = 700;
@@ -110,11 +171,12 @@ const REFETCH_THROTTLE_MS = 1500;
 const VERSION_POLL_MS = 15_000;
 const TIMELINE_H_KEY = "aiev-editor-timeline-h";
 /**
- * Vừa khít 7 track (32px) + thước + thanh tiêu đề - không cuộn dọc mà cũng
- * không thừa chỗ: mỗi pixel bớt ở đây là trình phát (khung dọc 9:16 bị giới hạn
- * bởi CHIỀU CAO) to thêm.
+ * Vừa khít 8 track (32px, gồm track Layer một làn) + thước + thanh tiêu đề -
+ * không cuộn dọc mà cũng không thừa chỗ: mỗi pixel bớt ở đây là trình phát
+ * (khung dọc 9:16 bị giới hạn bởi CHIỀU CAO) to thêm. Màn thấp vẫn bị kẹp theo
+ * 34% chiều cao cửa sổ (xem effect đọc TIMELINE_H_KEY).
  */
-const TIMELINE_H_DEFAULT = 304;
+const TIMELINE_H_DEFAULT = 336;
 const TIMELINE_H_MIN = 180;
 /** Cột Thư viện gấp/mở - nhớ theo trình duyệt (chỉ là tiện ích, mất thì về mở) */
 const LIBRARY_KEY = "aiev-editor-library";
@@ -132,6 +194,25 @@ const isRenderJob = (job: Job): boolean =>
   job.type === "assemble-final";
 
 const isActive = (job: Job): boolean => job.status === "queued" || job.status === "running";
+
+/** Một file đang/đã tải lên từ thả-file hoặc nút "Tải lên" của thư viện. */
+interface UploadRow {
+  id: number;
+  name: string;
+  status: "queued" | "uploading" | "done" | "error";
+  received: number;
+  /** 0 = chưa biết tổng (chưa có event tiến độ) → thanh vô định */
+  total: number;
+  error?: string;
+}
+
+/** Một file trong hàng đợi tải lên + chỗ chèn (null = chỉ vào thư viện). */
+interface UploadJob {
+  row: number;
+  file: File;
+  /** Dùng CHUNG cho mọi file của một lượt thả: chèn xong một file thì dời tiếp (scene kế / sau layer trước) */
+  target: { drop: DropTarget; nextSceneIndex: number; nextFrame: number } | null;
+}
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -154,6 +235,11 @@ function selectionFromIssuePath(path: string, tl: Timeline): Selection | null {
   }
   const sfx = /^audio\.sfx\[(\d+)\]/.exec(path);
   if (sfx) return { kind: "sfx", index: Number(sfx[1]) };
+  const layer = /^layers\[(\d+)\]/.exec(path);
+  if (layer) {
+    const id = layersOf(tl)[Number(layer[1])]?.id;
+    return typeof id === "string" && id ? { kind: "layer", id } : null;
+  }
   if (path.startsWith("audio.music")) return { kind: "music" };
   if (path.startsWith("audio.voice")) return { kind: "voice" };
   return null;
@@ -188,6 +274,10 @@ export function VideoEditor({ projectId }: { projectId: string }) {
   const [state, dispatch] = useReducer(editorReducer, initialEditorState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  /** Track đang khóa (nhớ theo project trong trình duyệt) - edit() chặn mọi thao tác đổi chúng */
+  const { locks, toggle: toggleLock } = useTrackLocks(projectId);
+  const locksRef = useRef(locks);
+  locksRef.current = locks;
 
   const [info, setInfo] = useState<{ project: TimelineProject; preview: TimelinePreview } | null>(null);
   const [lock, setLock] = useState<TimelineLock | null>(null);
@@ -208,10 +298,18 @@ export function VideoEditor({ projectId }: { projectId: string }) {
   /** Chờ xác nhận thay nhạc nền đang có */
   const [pendingMusic, setPendingMusic] = useState<LibraryItem | null>(null);
   const [exportProblem, setExportProblem] = useState<{ message: string; detail?: string } | null>(null);
+  /** Ô "Tạo bằng AI tại đây" đang mở ở mốc nào (chuột phải / phím G trên timeline) */
+  const [aiAnchor, setAiAnchor] = useState<TimelineAiAnchor | null>(null);
+  /** Mốc dưới con trỏ trên timeline (TimelinePanel ghi) - phím G mở ô AI ở đó */
+  const aiHoverRef = useRef<TimelineAiAnchor | null>(null);
+  /** Việc giao thẳng cho chat AI từ timeline - EditorChat gửi ngay */
+  const [chatQueued, setChatQueued] = useState<{ id: number; text: string } | null>(null);
 
   const playback = useMemo(() => createPlaybackStore(), []);
   /** Đang kéo khối trên timeline (TimelinePanel đặt) - xem EditorApi.dragActive */
   const dragActive = useRef(false);
+  /** Bản sao của Ctrl+C - sống trong phiên, không qua clipboard hệ điều hành */
+  const clipboardRef = useRef<ClipboardEntry | null>(null);
   const playerRef = useRef<PlayerRef | null>(null);
   const libraryBusyRef = useRef(false);
   const pendingTargetRef = useRef<DropTarget | null>(null);
@@ -733,6 +831,16 @@ export function VideoEditor({ projectId }: { projectId: string }) {
 
   const edit = useCallback((apply: (tl: Timeline) => Timeline, options?: EditOptions) => {
     if (readOnlyRef.current) return;
+    // Track đã khóa: chạy thử thao tác trên timeline hiện tại, đụng track khóa nào
+    // là bỏ CẢ thao tác (ops thuần nên chạy thử không có tác dụng phụ)
+    const cur = stateRef.current.timeline;
+    if (cur && locksRef.current.size > 0) {
+      const hit = lockedChange(cur, apply(cur), locksRef.current);
+      if (hit) {
+        lockBlockedRef.current(hit);
+        return;
+      }
+    }
     dispatch({
       type: "edit",
       apply,
@@ -746,6 +854,8 @@ export function VideoEditor({ projectId }: { projectId: string }) {
   const endCoalesce = useCallback(() => dispatch({ type: "endCoalesce" }), []);
 
   const flashNotice = useCallback((message: string) => setNotice(message), []);
+  const lockBlockedRef = useRef<(track: LockableTrack) => void>(() => {});
+  lockBlockedRef.current = (track) => flashNotice(tf("editor.lock.blocked", { track: t(TRACK_LABEL_KEY[track]) }));
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 4000);
@@ -789,14 +899,44 @@ export function VideoEditor({ projectId }: { projectId: string }) {
     edit((tl) => deleteSelection(tl, sel), { selection: null });
   }, [edit, flashNotice, t]);
 
+  /** Hoàn tác / làm lại cũng không được đổi track đã khóa (chúng không đi qua edit()) */
+  const historyHitsLock = (target: Timeline | undefined): boolean => {
+    const cur = stateRef.current.timeline;
+    if (!cur || !target || locksRef.current.size === 0) return false;
+    const hit = lockedChange(cur, target, locksRef.current);
+    if (hit) lockBlockedRef.current(hit);
+    return hit !== null;
+  };
   const undo = useCallback(() => {
-    if (!readOnlyRef.current) dispatch({ type: "undo" });
+    if (readOnlyRef.current) return;
+    const past = stateRef.current.past;
+    if (historyHitsLock(past[past.length - 1]?.timeline)) return;
+    dispatch({ type: "undo" });
   }, []);
   const redo = useCallback(() => {
-    if (!readOnlyRef.current) dispatch({ type: "redo" });
+    if (readOnlyRef.current) return;
+    if (historyHitsLock(stateRef.current.future[0]?.timeline)) return;
+    dispatch({ type: "redo" });
   }, []);
 
   // ================================================================ thêm tại playhead
+
+  /** Menu "+" của track Layer: layer chữ / khối màu tại playhead (3 giây, không thò ra sau video). */
+  const addLayerAtPlayhead = useCallback(
+    (kind: AddLayerKind) => {
+      const s = stateRef.current;
+      if (!s.timeline || readOnlyRef.current) return;
+      const place = newLayerPlacement(playback.getFrame(), totalRef.current, fps);
+      const id = newLayerId(layersOf(s.timeline), kind === "text" ? "text" : "shape");
+      const vertical = (info?.project.height ?? 0) > (info?.project.width ?? 0);
+      const layer =
+        kind === "text"
+          ? newTextLayer(id, t("editor.layers.new-text"), place.from, place.durationInFrames, { vertical })
+          : newShapeLayer(id, place.from, place.durationInFrames);
+      edit((tl) => addLayer(tl, layer), { selection: { kind: "layer", id } });
+    },
+    [edit, fps, info, playback, t],
+  );
 
   const addCueAtPlayhead = useCallback(
     (kind: AddCueKind) => {
@@ -943,12 +1083,32 @@ export function VideoEditor({ projectId }: { projectId: string }) {
       setLibraryBusy({ key, name: item.name, importing: item.source !== "project" });
       libraryBusyRef.current = true;
       try {
+        if (track === "layer" && item.source === "project" && item.kind !== "audio") {
+          const rel = item.relPath;
+          const kind = item.kind;
+          // Đo cả ảnh: kích thước file (tỉ lệ hộp layer) vào preview.media
+          const measured = await measure(rel);
+          const sec = kind === "video" ? measured : null;
+          const latest = stateRef.current.timeline;
+          if (!latest || readOnlyRef.current) return;
+          const place = newLayerPlacement(
+            frame,
+            totalRef.current,
+            fps,
+            kind === "video" ? (sec ?? NEW_LAYER_VIDEO_FALLBACK_SEC) : NEW_LAYER_SEC,
+          );
+          const id = layerIdFromFile(layersOf(latest), rel);
+          const layer = newMediaLayer(id, kind, rel, place.from, place.durationInFrames);
+          edit((tl) => addLayer(tl, layer), { selection: { kind: "layer", id } });
+          return;
+        }
         if (track === "scene" && item.source === "project" && item.kind !== "audio") {
           const rel = item.relPath;
+          // Đo cả ảnh: measure → rememberMedia ghi file vào preview.mediaVersions,
+          // không thì bản xem trước coi ảnh mới là "thiếu file" tới lần tải lại kế
+          const measured = await measure(rel);
           const scene =
-            item.kind === "video"
-              ? newFootageScene("", rel, await measure(rel), fps)
-              : newImageScene("", rel, fps);
+            item.kind === "video" ? newFootageScene("", rel, measured, fps) : newImageScene("", rel, fps);
           const latest = stateRef.current.timeline;
           if (!latest || readOnlyRef.current) return;
           const id = sceneIdFromFile(latest.scenes, rel);
@@ -985,6 +1145,375 @@ export function VideoEditor({ projectId }: { projectId: string }) {
       }
     },
     [edit, fps, importFromLibrary, measure, playback, tf],
+  );
+
+  // ================================================================ tải file lên (thả từ máy / nút "Tải lên")
+
+  const [uploads, setUploads] = useState<UploadRow[]>([]);
+  const uploadQueue = useRef<UploadJob[]>([]);
+  const uploadRunning = useRef(false);
+  /** Dòng đang tải - event SSE `upload` của project (server nhận file) đổ tiến độ vào đây */
+  const activeUploadRow = useRef<number | null>(null);
+  const uploadSeq = useRef(0);
+  /** Đang kéo file từ máy qua trình chỉnh sửa: "true" nhận được / "reject" chỉ đọc */
+  const [fileDrag, setFileDrag] = useState<"true" | "reject" | null>(null);
+
+  const patchUpload = useCallback((id: number, patch: Partial<UploadRow>) => {
+    setUploads((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }, []);
+
+  // Tải tuần tự nên tại mỗi lúc chỉ có MỘT request của trang này đang gửi: mọi
+  // event tiến độ của project trong lúc đó là của nó (tải từ điện thoại cùng lúc
+  // thì có thể lẫn - chỉ là thanh tiến độ, file nào vẫn đúng file đó)
+  useUploadEvents((e) => {
+    const row = activeUploadRow.current;
+    if (row === null || e.projectId !== projectId || e.done) return;
+    patchUpload(row, { received: e.received ?? 0, total: e.total ?? 0 });
+  });
+
+  /** Chèn file vừa tải lên vào đúng track của lượt thả (null = chỉ vào thư viện). */
+  const insertUploaded = useCallback(
+    async (rel: string, kind: "video" | "image" | "audio" | "other", target: UploadJob["target"]) => {
+      if (!target || kind === "other") return;
+      const track = target.drop.track;
+      const latest = () => (readOnlyRef.current ? null : stateRef.current.timeline);
+      if (kind === "audio") {
+        // Âm thanh thả lên Video/Layer/SFX đều thành hiệu ứng âm tại chỗ thả
+        await measure(rel);
+        const tl = latest();
+        if (!tl) return;
+        const result = addSfx(tl, rel, target.drop.frame);
+        edit(() => result.timeline, { selection: result.selection });
+        return;
+      }
+      if (track === "scene") {
+        // Đo cả ảnh (như track Layer): file vừa tải lên phải vào preview.mediaVersions ngay
+        const measured = await measure(rel);
+        const scene = kind === "video" ? newFootageScene("", rel, measured, fps) : newImageScene("", rel, fps);
+        const tl = latest();
+        if (!tl) return;
+        const id = sceneIdFromFile(tl.scenes, rel);
+        const at = target.nextSceneIndex;
+        target.nextSceneIndex += 1;
+        edit((cur) => addScene(cur, at, { ...scene, id }), { selection: { kind: "scene", id } });
+        return;
+      }
+      if (track === "layer") {
+        const sec = await measure(rel);
+        const tl = latest();
+        if (!tl) return;
+        const place = newLayerPlacement(
+          target.nextFrame,
+          totalRef.current,
+          fps,
+          kind === "video" ? (sec ?? NEW_LAYER_VIDEO_FALLBACK_SEC) : NEW_LAYER_SEC,
+        );
+        // Nhiều file một lượt thả: nối tiếp nhau trên track Layer
+        target.nextFrame = place.from + place.durationInFrames;
+        const id = layerIdFromFile(layersOf(tl), rel);
+        const layer = newMediaLayer(id, kind, rel, place.from, place.durationInFrames);
+        edit((cur) => addLayer(cur, layer), { selection: { kind: "layer", id } });
+      }
+      // Video/ảnh thả lên track SFX: chỉ vào thư viện (không có nghĩa trên track âm thanh)
+    },
+    [edit, fps, measure],
+  );
+
+  const runUploads = useCallback(async () => {
+    if (uploadRunning.current) return;
+    uploadRunning.current = true;
+    try {
+      for (let job = uploadQueue.current.shift(); job; job = uploadQueue.current.shift()) {
+        activeUploadRow.current = job.row;
+        patchUpload(job.row, { status: "uploading" });
+        try {
+          const saved = await uploadAsset(job.file, "project", projectId);
+          activeUploadRow.current = null;
+          patchUpload(job.row, { status: "done" });
+          setAssetsTick((n) => n + 1);
+          const rel = projectRelPath(saved.relPath, projectId);
+          const kind = saved.kind !== "other" ? saved.kind : fileKindOf(job.file);
+          await insertUploaded(rel, kind, job.target);
+        } catch (err) {
+          activeUploadRow.current = null;
+          patchUpload(job.row, { status: "error", error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    } finally {
+      activeUploadRow.current = null;
+      uploadRunning.current = false;
+    }
+  }, [insertUploaded, patchUpload, projectId]);
+
+  /**
+   * Tải các file vào assets của project, TUẦN TỰ (một file lớn không tranh băng
+   * thông với file sau, tiến độ đọc được). `target` = chỗ thả trên timeline;
+   * null = chỉ vào thư viện. Đang chỉ đọc (AI sửa) thì vẫn tải vào thư viện
+   * nhưng không chèn gì vào timeline.
+   */
+  const uploadFiles = useCallback(
+    (files: File[], target: DropTarget | null) => {
+      if (files.length === 0) return;
+      const shared =
+        target && !readOnlyRef.current
+          ? { drop: target, nextSceneIndex: target.sceneIndex, nextFrame: target.frame }
+          : null;
+      if (target && readOnlyRef.current) flashNotice(t("editor.drop.readonly"));
+      const rows: UploadRow[] = files.map((f) => {
+        uploadSeq.current += 1;
+        return { id: uploadSeq.current, name: f.name, status: "queued", received: 0, total: f.size };
+      });
+      setUploads((cur) => [...cur.filter((r) => r.status !== "done"), ...rows]);
+      files.forEach((file, i) => uploadQueue.current.push({ row: rows[i].id, file, target: shared }));
+      void runUploads();
+    },
+    [flashNotice, runUploads, t],
+  );
+
+  // Dòng xong tự ẩn sau 4s; dòng lỗi ở lại tới khi người dùng đóng
+  useEffect(() => {
+    if (!uploads.some((r) => r.status === "done") || uploads.some((r) => r.status === "uploading" || r.status === "queued")) return;
+    const timer = window.setTimeout(() => setUploads((cur) => cur.filter((r) => r.status !== "done")), 4000);
+    return () => window.clearTimeout(timer);
+  }, [uploads]);
+
+  const uploadingNow = uploads.some((r) => r.status === "uploading" || r.status === "queued");
+
+  // ================================================================ sao chép / dán
+
+  const copyAction = useCallback((): boolean => {
+    const s = stateRef.current;
+    if (!s.timeline || !s.selection) return false;
+    const clip = copySelection(s.timeline, s.selection);
+    if (!clip) {
+      flashNotice(t("editor.clipboard.cannot-copy"));
+      return true;
+    }
+    clipboardRef.current = clip;
+    flashNotice(t("editor.clipboard.copied"));
+    return true;
+  }, [flashNotice, t]);
+
+  const pasteAction = useCallback((): boolean => {
+    const s = stateRef.current;
+    const clip = clipboardRef.current;
+    if (!s.timeline || !clip || readOnlyRef.current) return false;
+    const result = pasteClipboard(s.timeline, clip, playback.getFrame(), computeSceneSpans(s.timeline.scenes, fps));
+    if (!result) return true;
+    edit(() => result.timeline, { selection: result.selection });
+    return true;
+  }, [edit, fps, playback]);
+
+  /** Ctrl+] / Ctrl+[: đưa layer đang chọn lên / xuống một lớp. */
+  const layerZAction = useCallback(
+    (delta: 1 | -1) => {
+      const sel = stateRef.current.selection;
+      if (sel?.kind !== "layer" || readOnlyRef.current) return;
+      const tl = stateRef.current.timeline;
+      if (!tl) return;
+      const next = moveLayerZ(tl, sel.id, delta);
+      if (next === tl) {
+        flashNotice(delta > 0 ? t("editor.layers.already-top") : t("editor.layers.already-bottom"));
+        return;
+      }
+      const id = sel.id;
+      edit((cur) => moveLayerZ(cur, id, delta));
+    },
+    [edit, flashNotice, t],
+  );
+
+  // ================================================================ ảnh AI (tab "AI" của thư viện)
+
+  /**
+   * Ảnh AI đã nằm trong project: "cảnh trám" = scene ảnh 3s + punch-in nhẹ chèn
+   * tại playhead (cùng luật chèn với thả từ thư viện), "layer" = layer ảnh tại
+   * playhead. AI đang sửa project thì ảnh chỉ vào thư viện.
+   */
+  const onAiImageReady = useCallback(
+    async ({ relPath, purpose, frame: at }: { relPath: string; purpose: AiImagePurpose; frame?: number }) => {
+      setAssetsTick((n) => n + 1);
+      // Đo kích thước ảnh (tỉ lệ hộp layer, khung chọn trên preview)
+      await measure(relPath);
+      const s = stateRef.current;
+      if (!s.timeline) return;
+      if (readOnlyRef.current) {
+        flashNotice(t("editor.drop.readonly"));
+        return;
+      }
+      // Lượt neo theo mốc timeline vào đúng mốc đó; tab AI của thư viện thì playhead
+      const frame = at ?? playback.getFrame();
+      if (purpose === "filler") {
+        const id = sceneIdFromFile(s.timeline.scenes, relPath);
+        const scene = newFillerScene(id, relPath, fps);
+        if (at !== undefined) {
+          // Neo theo mốc: tách scene tại đúng mốc rồi chèn (cue phía sau lùi theo)
+          const locked = locksRef.current;
+          edit((tl) => insertSceneAtFrame(tl, scene, at, computeSceneSpans(tl.scenes, fps), opsCtx, locked), {
+            selection: { kind: "scene", id },
+          });
+          return;
+        }
+        const idx = sceneInsertIndexAt(computeSceneSpans(s.timeline.scenes, fps), frame);
+        edit((tl) => addScene(tl, idx, scene), { selection: { kind: "scene", id } });
+        return;
+      }
+      const place = newLayerPlacement(frame, totalRef.current, fps);
+      const id = layerIdFromFile(layersOf(s.timeline), relPath);
+      const layer = newMediaLayer(id, "image", relPath, place.from, place.durationInFrames);
+      edit((tl) => addLayer(tl, layer), { selection: { kind: "layer", id } });
+    },
+    [edit, flashNotice, fps, measure, opsCtx, playback, t],
+  );
+
+  // ================================================================ AI tại một mốc trên timeline
+
+  /** Chữ AI viết xong: layer chữ 3 giây tại mốc đã chọn (một bước hoàn tác). */
+  const onAiTextReady = useCallback(
+    (job: TimelineAiJob, text: string) => {
+      const s = stateRef.current;
+      if (!s.timeline) return;
+      if (readOnlyRef.current) {
+        flashNotice(tf("editor.tlai.text-readonly", { text }));
+        return;
+      }
+      const place = newLayerPlacement(job.frame, totalRef.current, fps);
+      const id = newLayerId(layersOf(s.timeline), "text");
+      const vertical = (info?.project.height ?? 0) > (info?.project.width ?? 0);
+      const layer = newTextLayer(id, text, place.from, place.durationInFrames, { vertical });
+      edit((tl) => addLayer(tl, layer), { selection: { kind: "layer", id } });
+    },
+    [edit, flashNotice, fps, info, tf],
+  );
+
+  const aiJobs = useTimelineAiJobs({
+    projectId,
+    onImageReady: (job, relPath) =>
+      void onAiImageReady({ relPath, purpose: job.mode === "filler" ? "filler" : "layer", frame: job.frame }),
+    onTextReady: onAiTextReady,
+  });
+  const aiChatSeq = useRef(0);
+
+  const onAiSubmit = useCallback(
+    (mode: TimelineAiMode, prompt: string) => {
+      const anchor = aiAnchor;
+      const tl = stateRef.current.timeline;
+      setAiAnchor(null);
+      if (!anchor || !tl) return;
+      const frame = anchor.frame;
+      if (mode === "chat") {
+        // Mốc ghi cả giây lẫn frame tuyệt đối - agent đọc meta.json theo frame
+        aiChatSeq.current += 1;
+        setChatQueued({
+          id: aiChatSeq.current,
+          text: tf("editor.tlai.chat-message", {
+            time: formatSeconds(frame, fps),
+            frame,
+            fps,
+            prompt,
+          }),
+        });
+        return;
+      }
+      void aiJobs.start(mode, prompt, frame, { atSec: frame / fps, context: spokenContextAt(tl, frame, fps) });
+    },
+    [aiAnchor, aiJobs, fps, tf],
+  );
+
+  const closeAiPopover = useCallback(() => setAiAnchor(null), []);
+  /** Ảnh / chữ vào track Layer, cảnh trám vào track Video - track khóa thì tắt chế độ đó */
+  const aiLockedModes = useMemo(() => {
+    const out = new Set<TimelineAiMode>();
+    if (locks.has("layer")) {
+      out.add("layer");
+      out.add("text");
+    }
+    if (locks.has("scene")) out.add("filler");
+    return out;
+  }, [locks]);
+
+  /** Phím G: mở ô AI tại mốc dưới con trỏ (đang rê trên timeline), không thì tại playhead. */
+  const openAiAtHover = useCallback(() => {
+    const hover = aiHoverRef.current;
+    if (hover) {
+      setAiAnchor(hover);
+      return;
+    }
+    const box = document.querySelector(".editor-root .tl")?.getBoundingClientRect();
+    setAiAnchor({
+      frame: Math.min(playback.getFrame(), Math.max(0, totalRef.current - 1)),
+      clientX: box ? box.left + box.width / 2 - 170 : window.innerWidth / 2,
+      clientY: box ? box.top : window.innerHeight / 2,
+    });
+  }, [playback]);
+
+  // ================================================================ thao tác trên khung xem trước
+
+  /**
+   * Một lượt kéo trên khung xem trước = MỘT bước hoàn tác: mọi "preview" của
+   * lượt đó gộp chung một key (windowMs null - gộp suốt lượt), "commit" ghi bản
+   * cuối rồi đóng bước. Lượt kế tiếp nhận key mới.
+   */
+  const canvasGesture = useRef<string | null>(null);
+  const canvasSeq = useRef(0);
+  const onCanvasTransform = useCallback(
+    (target: CanvasTarget, transform: Record<string, unknown>, phase: "preview" | "commit") => {
+      if (readOnlyRef.current) {
+        canvasGesture.current = null;
+        return;
+      }
+      if (!canvasGesture.current) {
+        canvasSeq.current += 1;
+        canvasGesture.current = `canvas:${canvasSeq.current}`;
+      }
+      const key = canvasGesture.current;
+      const frame = playback.getFrame();
+      let fn: (tl: Timeline) => Timeline;
+      if (target.kind === "scene") {
+        const id = target.id;
+        fn = (tl) => patchScene(tl, id, { transform: transform as TimelineScene["transform"] });
+      } else if (target.kind === "layer") {
+        const id = target.id;
+        fn = (tl) => applyLayerCanvasTransform(tl, id, transform, frame);
+      } else {
+        const kind = CUE_KIND[target.kind];
+        const index = target.index;
+        fn = (tl) => setCueTransform(tl, kind, index, transform);
+      }
+      edit(fn, { coalesce: key, windowMs: null });
+      if (phase === "commit") {
+        canvasGesture.current = null;
+        endCoalesce();
+      }
+    },
+    [edit, endCoalesce, playback],
+  );
+
+  /** Nhấp đúp trên khung: chọn mục rồi đưa con trỏ vào ô sửa chữ (inspector dựng form ở lượt render sau) */
+  const onCanvasEditText = useCallback(
+    (sel: Selection) => {
+      if (readOnlyRef.current) return;
+      select(sel);
+      const id = primaryTextFieldId(sel);
+      if (!id) return;
+      requestAnimationFrame(() => {
+        const el = document.getElementById(id);
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+          el.focus();
+          el.select();
+        }
+      });
+    },
+    [select],
+  );
+
+  const mediaAspect = useCallback(
+    (rel: string): number | undefined => {
+      const m = info?.preview.media[rel];
+      return m && typeof m.width === "number" && typeof m.height === "number" && m.width > 0 && m.height > 0
+        ? m.width / m.height
+        : undefined;
+    },
+    [info],
   );
 
   const confirmMusic = useCallback(() => {
@@ -1094,10 +1623,12 @@ export function VideoEditor({ projectId }: { projectId: string }) {
 
       // Đang kéo khối trên timeline: phím SỬA bị nuốt - chúng đổi timeline giữa
       // lượt kéo (xem TimelinePanel: lượt kéo dừng khi timeline đổi từ nơi khác)
+      const bracket = mod && (e.code === "BracketRight" || e.code === "BracketLeft" || key === "]" || key === "[");
       const editingKey =
         ((key === "s" || key === "S") && !mod && !e.altKey) ||
         ((key === "Delete" || key === "Backspace") && !mod) ||
-        (mod && ["d", "D", "z", "Z", "y", "Y"].includes(key)) ||
+        (mod && ["d", "D", "z", "Z", "y", "Y", "v", "V"].includes(key)) ||
+        bracket ||
         (arrow && e.altKey && !mod);
       if (editingKey && dragActive.current) {
         e.preventDefault();
@@ -1137,6 +1668,17 @@ export function VideoEditor({ projectId }: { projectId: string }) {
       } else if (mod && (key === "d" || key === "D")) {
         e.preventDefault();
         duplicateAction();
+      } else if (mod && !e.shiftKey && !e.altKey && (key === "c" || key === "C")) {
+        // Đang bôi đen chữ trên trang thì để trình duyệt chép chữ như thường
+        const textSel = window.getSelection();
+        if (textSel && !textSel.isCollapsed && textSel.toString().trim()) return;
+        if (copyAction()) e.preventDefault();
+      } else if (mod && !e.shiftKey && !e.altKey && (key === "v" || key === "V")) {
+        if (pasteAction()) e.preventDefault();
+      } else if (bracket) {
+        if (stateRef.current.selection?.kind !== "layer") return;
+        e.preventDefault();
+        layerZAction(e.code === "BracketRight" || key === "]" ? 1 : -1);
       } else if (mod && (key === "z" || key === "Z")) {
         e.preventDefault();
         if (e.shiftKey) redo();
@@ -1149,38 +1691,84 @@ export function VideoEditor({ projectId }: { projectId: string }) {
       } else if (key === "?") {
         e.preventDefault();
         setShortcutsOpen(true);
+      } else if ((key === "g" || key === "G") && !mod && !e.altKey) {
+        e.preventDefault();
+        openAiAtHover();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fps, togglePlay, step, seek, splitAction, deleteAction, duplicateAction, undo, redo, edit, dragActive]);
+  }, [
+    fps,
+    togglePlay,
+    step,
+    seek,
+    splitAction,
+    deleteAction,
+    duplicateAction,
+    copyAction,
+    pasteAction,
+    layerZAction,
+    undo,
+    redo,
+    edit,
+    dragActive,
+    openAiAtHover,
+  ]);
 
   // ================================================================ thả file từ máy
 
-  // Kéo file từ Explorer/Finder thả vào editor: mặc định trình duyệt MỞ file đó
-  // thay trang (mất trình chỉnh sửa, mất thay đổi chưa lưu). Editor không nhận
-  // upload - chặn hẳn trên cả trang và nhắc đường đúng (trang project → Assets).
+  // Thả trong trình chỉnh sửa do handler của `.editor-root` (và TimelinePanel cho
+  // track Video/Layer/SFX) lo. Ở đây chỉ là LƯỚI AN TOÀN cho phần còn lại của
+  // trang (thanh bên của shell, panel AI…): file thả ra ngoài editor mà không ai
+  // nhận thì trình duyệt sẽ MỞ file thay trang - mất trình chỉnh sửa và mọi thay
+  // đổi chưa lưu. Handler React chạy trước (gắn ở root của app) nên
+  // `defaultPrevented` = đã có nơi nhận.
   useEffect(() => {
-    const hasFiles = (e: DragEvent): boolean =>
-      !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
+    const hasFiles = (e: DragEvent): boolean => !!e.dataTransfer && isFileDrag(Array.from(e.dataTransfer.types));
     const onDragOver = (e: DragEvent) => {
-      if (!hasFiles(e)) return;
+      if (!hasFiles(e) || e.defaultPrevented) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
-      flashNotice(t("editor.notice.files-drop"));
     };
     const onDrop = (e: DragEvent) => {
-      if (!hasFiles(e)) return;
-      e.preventDefault();
-      flashNotice(t("editor.notice.files-drop"));
+      if (hasFiles(e) && !e.defaultPrevented) e.preventDefault();
+      setFileDrag(null);
     };
+    const onDragEnd = () => setFileDrag(null);
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("drop", onDrop);
+    window.addEventListener("dragend", onDragEnd);
     return () => {
       window.removeEventListener("dragover", onDragOver);
       window.removeEventListener("drop", onDrop);
+      window.removeEventListener("dragend", onDragEnd);
     };
-  }, [flashNotice, t]);
+  }, []);
+
+  const onRootDragOver = (e: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag([...e.dataTransfer.types])) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = readOnly ? "none" : "copy";
+    const next = readOnly ? "reject" : "true";
+    if (fileDrag !== next) setFileDrag(next);
+  };
+  const onRootDragLeave = (e: ReactDragEvent<HTMLDivElement>) => {
+    const to = e.relatedTarget;
+    if (to instanceof Node && e.currentTarget.contains(to)) return;
+    setFileDrag(null);
+  };
+  const onRootDrop = (e: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag([...e.dataTransfer.types])) return;
+    e.preventDefault();
+    setFileDrag(null);
+    if (readOnly) {
+      flashNotice(t("editor.drop.readonly-blocked"));
+      return;
+    }
+    // Ngoài track Video/Layer/SFX (TimelinePanel đã chặn lan khi thả lên đó): chỉ vào thư viện
+    uploadFiles(Array.from(e.dataTransfer.files), null);
+  };
 
   // ================================================================ render
 
@@ -1293,6 +1881,8 @@ export function VideoEditor({ projectId }: { projectId: string }) {
       vertical: (info?.project.height ?? 0) > (info?.project.width ?? 0),
       ops: opsCtx,
       readOnly,
+      locks,
+      toggleLock,
       selection: state.selection,
       edit,
       select,
@@ -1301,7 +1891,14 @@ export function VideoEditor({ projectId }: { projectId: string }) {
       playback,
       dragActive,
     }),
-    [fps, info, opsCtx, readOnly, state.selection, edit, select, endCoalesce, seek, playback],
+    [fps, info, opsCtx, readOnly, locks, toggleLock, state.selection, edit, select, endCoalesce, seek, playback],
+  );
+
+  const selectedTrack = trackOfSelection(state.selection);
+  const selectionLocked = selectedTrack !== null && locks.has(selectedTrack);
+  const inspectorApi = useMemo<EditorApi>(
+    () => (selectionLocked ? { ...api, readOnly: true } : api),
+    [api, selectionLocked],
   );
 
   const menuItems = useMemo<EditorMenuItem[]>(
@@ -1340,6 +1937,82 @@ export function VideoEditor({ projectId }: { projectId: string }) {
     [onProjectAgentEvent, requestRefetch],
   );
 
+  // ================================================================ giao cho AI + duyệt kết quả
+
+  const [handoffOpen, setHandoffOpen] = useState(false);
+  /**
+   * Phiên "Giao cho AI" đang theo dõi. Xong = khóa chỉ đọc (agentBusy) đã BẬT rồi
+   * TẮT lại kể từ khi phiên mở - cùng cơ chế với mọi phiên AI (SSE agent + hỏi
+   * lại version), không cần kênh riêng.
+   */
+  const handoffRef = useRef<{ sessionId: string; beforeRev: string | null; sawBusy: boolean } | null>(
+    null,
+  );
+  const [aiReview, setAiReview] = useState<{ sessionId: string; beforeRev: string | null } | null>(null);
+  const [aiUndoBusy, setAiUndoBusy] = useState(false);
+
+  const onHandoffStarted = useCallback(
+    (sessionId: string, beforeRev: string | null) => {
+      handoffRef.current = { sessionId, beforeRev, sawBusy: false };
+      setAiReview(null);
+      onSessionStarted(sessionId);
+    },
+    [onSessionStarted],
+  );
+
+  useEffect(() => {
+    const h = handoffRef.current;
+    if (!h) return;
+    if (readOnly) {
+      h.sawBusy = true;
+      return;
+    }
+    if (h.sawBusy) {
+      handoffRef.current = null;
+      setAiReview({ sessionId: h.sessionId, beforeRev: h.beforeRev });
+    }
+  }, [readOnly]);
+
+  /**
+   * Hoàn tác lượt AI: khôi phục ĐÚNG revision server trả về lúc giao (`beforeRev`);
+   * thiếu (server không chụp được) mới lùi về `ai-before` mới nhất.
+   */
+  const undoAiHandoff = useCallback(async () => {
+    setAiUndoBusy(true);
+    try {
+      const revs = await getTimelineRevisions(projectId);
+      const wanted = aiReview?.beforeRev ?? null;
+      const before =
+        (wanted ? revs.find((r) => r.rev === wanted) : undefined) ??
+        revs
+          .filter((r) => r.source === "ai-before")
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (!before) {
+        flashNotice(t("editor.history.ai-before-missing"));
+        return;
+      }
+      const outcome = await restoreRevision(before);
+      if (outcome.ok) setAiReview(null);
+      else flashNotice(outcome.message);
+    } catch (err) {
+      setLibraryError({
+        message: t("editor.history.error"),
+        detail: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setAiUndoBusy(false);
+    }
+  }, [aiReview, flashNotice, projectId, restoreRevision, t]);
+
+  const aiReviewProps: EditorAiReview | null = aiReview
+    ? {
+        onKeep: () => setAiReview(null),
+        onUndo: () => void undoAiHandoff(),
+        onHistory: () => setHistoryOpen(true),
+        busy: aiUndoBusy,
+      }
+    : null;
+
   const sel = state.selection;
   const inspectorActions: InspectorActions = {
     split: splitAction,
@@ -1349,9 +2022,30 @@ export function VideoEditor({ projectId }: { projectId: string }) {
       !!timeline &&
       !!sel &&
       (isCueSel(sel.kind) ||
+        sel.kind === "layer" ||
         (sel.kind === "scene" && sceneIndexById(timeline, sel.id) >= 0 && canSplitScene(timeline.scenes[sceneIndexById(timeline, sel.id)], fps))),
     canDuplicate: !!timeline && canDuplicate(timeline, sel),
     canDelete: !!timeline && canDelete(timeline, sel),
+    // Ô số/thanh trượt truyền `coalesce`: các lần sửa liền nhau của cùng ô gộp
+    // thành MỘT bước hoàn tác (cửa sổ gõ phím), như mọi ô của inspector
+    patchScene: (id, patch, opts) =>
+      edit(
+        (tl) => patchScene(tl, id, patch),
+        opts?.coalesce ? { coalesce: opts.coalesce, windowMs: TYPING_COALESCE_MS } : undefined,
+      ),
+    patchLayer: (id, patch, opts) =>
+      edit(
+        (tl) => patchLayer(tl, id, patch),
+        opts?.coalesce ? { coalesce: opts.coalesce, windowMs: TYPING_COALESCE_MS } : undefined,
+      ),
+    // Thêm keyframe = chụp giá trị ĐANG HIỆN tại frame đó (vị trí/cỡ/xoay/độ mờ)
+    layerKeyframe: (id, op, relFrame) =>
+      edit((tl) => {
+        if (op === "remove") return removeLayerKeyframe(tl, id, relFrame);
+        const layer = layerById(tl, id);
+        return layer ? addLayerKeyframe(tl, id, relFrame, layerValuesAt(layer, relFrame)) : tl;
+      }),
+    layerZ: (id, delta) => edit((tl) => moveLayerZ(tl, id, delta)),
   };
 
   // ---------------------------------------------------------------- trạng thái lỗi/tải
@@ -1408,7 +2102,13 @@ export function VideoEditor({ projectId }: { projectId: string }) {
 
   return (
     <EditorContext.Provider value={api}>
-      <div className="editor-root">
+      <div
+        className="editor-root"
+        data-filedrop={fileDrag ?? undefined}
+        onDragOver={onRootDragOver}
+        onDragLeave={onRootDragLeave}
+        onDrop={onRootDrop}
+      >
         <EditorTopBar
           projectId={projectId}
           name={project.name || project.id}
@@ -1426,6 +2126,10 @@ export function VideoEditor({ projectId }: { projectId: string }) {
           renderDisabled={problem?.kind === "conflict" || timeline.scenes.length === 0}
           onRender={(q) => void startRender(q)}
           menuItems={menuItems}
+          onHandoff={() => setHandoffOpen(true)}
+          handoffDisabled={readOnly || problem?.kind === "conflict" || timeline.scenes.length === 0}
+          onExport={() => void startRender("final")}
+          aiReview={aiReviewProps}
         />
 
         {readOnly && <Banner tone="info" message={t("editor.banner.agent-busy")} />}
@@ -1543,6 +2247,24 @@ export function VideoEditor({ projectId }: { projectId: string }) {
             }
           />
         )}
+        {aiJobs.jobs
+          .filter((job) => job.status === "failed")
+          .map((job) => (
+            <ErrorBanner
+              key={job.id}
+              message={tf("editor.tlai.failed", {
+                what: jobWhat(t, job),
+                time: formatSeconds(job.frame, fps),
+                reason: job.error?.message ?? "",
+              })}
+              detail={job.error?.detail}
+              actions={
+                <Button variant="secondary" small onClick={() => aiJobs.dismiss(job.id)}>
+                  {t("common.close")}
+                </Button>
+              }
+            />
+          ))}
         {exportProblem && (
           <ErrorBanner
             message={exportProblem.message}
@@ -1554,12 +2276,73 @@ export function VideoEditor({ projectId }: { projectId: string }) {
             }
           />
         )}
+        {uploads.length > 0 && (
+          <Banner
+            tone={uploads.some((r) => r.status === "error") ? "danger" : "muted"}
+            message={
+              uploadingNow
+                ? tf("editor.drop.uploading", {
+                    done: uploads.filter((r) => r.status === "done").length,
+                    total: uploads.length,
+                  })
+                : uploads.some((r) => r.status === "error")
+                  ? t("editor.drop.upload-failed")
+                  : t("editor.drop.uploaded")
+            }
+            actions={
+              !uploadingNow ? (
+                <Button variant="secondary" small onClick={() => setUploads([])}>
+                  {t("common.close")}
+                </Button>
+              ) : undefined
+            }
+          >
+            <ul className="mt-2 flex max-h-32 flex-col gap-2 overflow-y-auto">
+              {uploads.map((row) => (
+                <li key={row.id} className="flex flex-col gap-1">
+                  <span className="flex min-w-0 items-center justify-between gap-2 text-meta">
+                    <span className="min-w-0 truncate" title={row.name}>
+                      {row.name}
+                    </span>
+                    <span className="shrink-0 text-[var(--text-muted)]">
+                      {row.status === "queued"
+                        ? t("editor.drop.status-queued")
+                        : row.status === "uploading"
+                          ? t("editor.drop.status-uploading")
+                          : row.status === "done"
+                            ? t("editor.drop.status-done")
+                            : t("editor.drop.status-error")}
+                    </span>
+                  </span>
+                  {row.status === "uploading" &&
+                    (row.total > 0 && row.received > 0 ? (
+                      <ProgressBar progress={(row.received / row.total) * 100} />
+                    ) : (
+                      <div className="progress-indeterminate" aria-hidden="true" />
+                    ))}
+                  {row.status === "error" && row.error && (
+                    <span className="text-meta text-[var(--danger)] [overflow-wrap:anywhere]">{row.error}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Banner>
+        )}
         {/* Thông báo thoáng qua (4s): nổi bên trên, KHÔNG chen vào dòng chảy -
             chen vào là cả trình phát + timeline bị đẩy xuống rồi bật lên lại */}
-        {notice && (
+        {fileDrag ? (
           <div className="editor-notice" role="status" aria-live="polite">
-            <Banner tone="muted" message={notice} />
+            <Banner
+              tone={fileDrag === "reject" ? "danger" : "info"}
+              message={fileDrag === "reject" ? t("editor.drop.readonly-blocked") : t("editor.drop.hint")}
+            />
           </div>
+        ) : (
+          notice && (
+            <div className="editor-notice" role="status" aria-live="polite">
+              <Banner tone="muted" message={notice} />
+            </div>
+          )
         )}
 
         <div className="editor-main" data-library={libraryCollapsed ? "collapsed" : "open"}>
@@ -1570,19 +2353,48 @@ export function VideoEditor({ projectId }: { projectId: string }) {
             readOnly={readOnly}
             busyKey={libraryBusy?.key ?? null}
             refreshKey={assetsTick}
-            onAdd={(item) => void addLibraryItem(item)}
+            onAdd={(item, track) =>
+              void addLibraryItem(
+                item,
+                // Chỉ định track (nút "Thêm làm layer"): tại playhead; vị trí chèn scene không dùng tới
+                track ? { track, frame: playback.getFrame(), sceneIndex: 0 } : undefined,
+              )
+            }
+            onUpload={(files) => uploadFiles(files, null)}
+            uploading={uploadingNow}
+            aiPanel={
+              <AiImagePanel projectId={projectId} readOnly={readOnly} onReady={(r) => void onAiImageReady(r)} />
+            }
           />
           <div className="editor-center">
             <div className="editor-stage">
               {timeline.scenes.length > 0 ? (
-                <PreviewPlayer
-                  ref={attachPlayer}
-                  projectId={projectId}
-                  timeline={timeline}
-                  project={info.project}
-                  preview={info.preview}
-                  controls={false}
-                />
+                <>
+                  <PreviewPlayer
+                    ref={attachPlayer}
+                    projectId={projectId}
+                    timeline={timeline}
+                    project={info.project}
+                    preview={info.preview}
+                    controls={false}
+                  />
+                  {/* Lớp kéo-thả trực tiếp trên hình (chọn/dời/đổi cỡ/xoay) - đè lên
+                      trình phát, cùng hàm hình học layerBox với engine */}
+                  <CanvasOverlay
+                    timeline={timeline}
+                    selection={state.selection}
+                    fps={fps}
+                    compWidth={project.width}
+                    compHeight={project.height}
+                    readOnly={readOnly}
+                    isLocked={(target) => locks.has(target.kind)}
+                    getFrame={playback.getFrame}
+                    mediaAspect={mediaAspect}
+                    onSelect={select}
+                    onEditText={onCanvasEditText}
+                    onTransform={onCanvasTransform}
+                  />
+                </>
               ) : (
                 // Project chưa có scene: composition cần ≥ 1 scene, hiện lỗi
                 // schema "scenes: Invalid input" ở đây là đúng mà vô ích
@@ -1607,7 +2419,19 @@ export function VideoEditor({ projectId }: { projectId: string }) {
             resetKeys={[timeline, state.selection]}
             className="card editor-inspector flex flex-col gap-3"
           >
-            <Inspector timeline={timeline} spans={spans} preview={info.preview} actions={inspectorActions} />
+            <EditorContext.Provider value={inspectorApi}>
+              <Inspector
+                timeline={timeline}
+                spans={spans}
+                preview={info.preview}
+                actions={inspectorActions}
+                locked={
+                  selectionLocked && selectedTrack && !readOnly
+                    ? { track: t(TRACK_LABEL_KEY[selectedTrack]), onUnlock: () => toggleLock(selectedTrack) }
+                    : null
+                }
+              />
+            </EditorContext.Provider>
           </EditorErrorBoundary>
         </div>
 
@@ -1646,12 +2470,40 @@ export function VideoEditor({ projectId }: { projectId: string }) {
             preview={info.preview}
             height={timelineHeight}
             onLibraryDrop={(item, target) => void addLibraryItem(item, target)}
+            onFilesDrop={uploadFiles}
             onAddCue={addCueAtPlayhead}
+            onAddLayer={addLayerAtPlayhead}
+            onAiAt={setAiAnchor}
+            aiJobs={aiJobs.jobs}
+            onAiJobClick={(job) => aiJobs.dismiss(job.id)}
+            hoverRef={aiHoverRef}
           />
         </EditorErrorBoundary>
 
-        <EditorChat projectId={projectId} onSessionStarted={onSessionStarted} beforeSend={flushSave} />
+        <EditorChat
+          projectId={projectId}
+          onSessionStarted={onSessionStarted}
+          beforeSend={flushSave}
+          queued={chatQueued}
+        />
+        {aiAnchor && (
+          <TimelineAiPopover
+            anchor={aiAnchor}
+            fps={fps}
+            readOnly={readOnly}
+            lockedModes={aiLockedModes}
+            onClose={closeAiPopover}
+            onSubmit={onAiSubmit}
+          />
+        )}
         <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+        <HandoffModal
+          open={handoffOpen}
+          onClose={() => setHandoffOpen(false)}
+          projectId={projectId}
+          onStarted={onHandoffStarted}
+          beforeStart={flushSave}
+        />
         <HistoryModal
           open={historyOpen}
           onClose={() => setHistoryOpen(false)}

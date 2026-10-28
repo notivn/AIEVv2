@@ -64,15 +64,26 @@ function LogPanel({
   onClose: () => void;
 }) {
   const { t, tf } = useT();
+  const { resyncTick } = useEvents();
   const [job, setJob] = useState<Job | null>(null);
   const [log, setLog] = useState("");
   const [error, setError] = useState<string | null>(null);
   const preRef = useRef<HTMLPreElement>(null);
+  // Người xem đang đứng ở đáy log không - kéo lên đọc dòng cũ thì thôi tự cuộn,
+  // không thì mỗi dòng log mới lại giật về đáy, job đang chạy là không đọc nổi.
+  const stickRef = useRef(true);
 
   useEffect(() => {
-    let alive = true;
     setLog("");
     setJob(null);
+    stickRef.current = true;
+  }, [jobId]);
+
+  // Tải job + log, và tải lại mỗi khi SSE nối lại (resyncTick): trong lúc đứt,
+  // job có thể đã xong/lỗi mà không có event nào tới - không tải lại thì khung
+  // này kẹt "đang chạy" kèm thanh tiến trình mãi, trong khi bảng đã đúng.
+  useEffect(() => {
+    let alive = true;
     (async () => {
       try {
         const j = await getJob(jobId);
@@ -87,7 +98,7 @@ function LogPanel({
     return () => {
       alive = false;
     };
-  }, [jobId]);
+  }, [jobId, resyncTick]);
 
   // Dòng log mới qua SSE
   useJobLogEvents((e) => {
@@ -100,10 +111,10 @@ function LogPanel({
     if (j.id === jobId) setJob((prev) => (prev ? { ...prev, ...j } : j));
   });
 
-  // Auto-scroll xuống cuối
+  // Auto-scroll xuống cuối - chỉ khi người xem đang ở đáy
   useEffect(() => {
     const el = preRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [log]);
 
   return (
@@ -132,6 +143,10 @@ function LogPanel({
       )}
       <pre
         ref={preRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+        }}
         className="max-h-96 min-h-40 overflow-auto rounded-[var(--radius)] bg-[var(--bg-subtle)] p-3 font-mono text-meta whitespace-pre-wrap"
       >
         {log || t("queue.no-log")}

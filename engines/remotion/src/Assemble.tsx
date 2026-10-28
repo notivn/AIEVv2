@@ -6,11 +6,12 @@ import {
 } from "./manifest";
 import { CaptionTrack } from "./components/CaptionTrack";
 import { HighlightTrack } from "./components/HighlightTrack";
+import { LayerTrack } from "./components/LayerTrack";
 import { MusicTrack } from "./components/MusicTrack";
 import { SceneClip } from "./components/SceneClip";
 import { SfxTrack } from "./components/SfxTrack";
 import { SubtitleTrack } from "./components/SubtitleTrack";
-import { Transition } from "./components/Transition";
+import { Transition, type TransitionSide } from "./components/Transition";
 import { useMediaErrorProps, useMediaSrc } from "./media";
 
 /**
@@ -20,24 +21,34 @@ import { useMediaErrorProps, useMediaSrc } from "./media";
  * Timeline: cộng dồn `from` theo durationInFrames từng scene, TRỪ
  * transitionOverlap khi chuyển scene (quên trừ là hở khoảng đen — skill
  * remotion-assemble). Scene sau nằm đè scene trước trong khoảng overlap,
- * crossfade do <Transition> xử lý bằng opacity.
+ * chuyển cảnh (`transition.type`, mặc định crossfade) do <Transition> xử lý.
  */
 export const Assemble: React.FC<Manifest> = (manifest) => {
   const { scenes, audio, fps, captions, overlays, watermark, subtitles, subtitleStyle } =
     manifest;
+  // Manifest dựng tay (Studio demo, props cũ) có thể chưa qua parse → thiếu default
+  const layers = manifest.layers ?? [];
   const mediaSrc = useMediaSrc();
   const errorProps = useMediaErrorProps();
 
   let from = 0;
   const sequences = scenes.map((scene, index) => {
     const duration = resolveSceneDurationInFrames(scene, fps);
-    // Crossfade của scene này do transitionOverlap của scene LIỀN TRƯỚC quyết định.
-    const fadeInFrames = index > 0 ? (scenes[index - 1].transitionOverlap ?? 0) : 0;
+    // Chuyển cảnh VÀO của scene này do scene LIỀN TRƯỚC quyết định (overlap +
+    // kiểu); chuyển cảnh RA là của chính nó (chỉ khi có scene kế).
+    const prev = index > 0 ? scenes[index - 1] : null;
+    const enter: TransitionSide | null = prev
+      ? { type: prev.transition?.type ?? "fade", frames: prev.transitionOverlap ?? 0 }
+      : null;
+    const exit: TransitionSide | null =
+      index < scenes.length - 1
+        ? { type: scene.transition?.type ?? "fade", frames: scene.transitionOverlap ?? 0 }
+        : null;
 
     const sequence = (
       <Sequence key={scene.id} from={from} durationInFrames={duration}>
-        <Transition fadeInFrames={fadeInFrames}>
-          <SceneClip scene={scene} fps={fps} />
+        <Transition enter={enter} exit={exit} durationInFrames={duration}>
+          <SceneClip scene={scene} fps={fps} durationInFrames={duration} />
         </Transition>
       </Sequence>
     );
@@ -49,6 +60,10 @@ export const Assemble: React.FC<Manifest> = (manifest) => {
   return (
     <AbsoluteFill style={{ backgroundColor: "#101113" }}>
       {sequences}
+
+      {/* Layer chồng (ảnh/video PiP/chữ/khối) - TRÊN scene, DƯỚI highlight/phụ
+          đề/watermark; trong track theo thứ tự mảng, phần tử sau nằm trên. */}
+      {layers.length > 0 ? <LayerTrack layers={layers} /> : null}
 
       {/* Thẻ làm nổi bật key — trên footage, dưới phụ đề (nếu có cả hai thì
           phụ đề là lớp trên cùng vì nó đọc liên tục). Có phụ đề → `raised`

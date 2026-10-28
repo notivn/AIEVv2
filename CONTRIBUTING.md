@@ -19,11 +19,11 @@ npm install
 npm run dev          # web on http://localhost:6868, backend on 6869
 ```
 
-You need **Node.js 22+**, **FFmpeg** on PATH and **Google Chrome**. `node start/doctor.mjs --fix` checks all of it and installs what it can. Claude and Gemini credentials are only needed to actually run the AI parts, not to build or typecheck the code.
+You need **Node.js 24 LTS** (22.23.4+ also works), **FFmpeg** on PATH and **Google Chrome**. `node start/doctor.mjs --fix` checks all of it and installs what it can. Claude and Gemini credentials are only needed to actually run the AI parts, not to build or typecheck the code.
 
 ## Before you open a Pull Request
 
-Both of these must pass. CI runs exactly the same two commands on every PR:
+Both of these must pass. CI runs the same two commands on every PR (on Node 24 and 22), plus `npm audit --omit=dev --audit-level=high`:
 
 ```bash
 npm run typecheck    # server + web + remotion
@@ -58,6 +58,7 @@ If you changed anything that renders, also make one real draft video and look at
 ## Things that will get a PR sent back
 
 - A new npm dependency without a reason in the PR description. Every dependency is a supply-chain risk in a project that holds API keys.
+- Approving a new install script without saying why. `.npmrc` sets `strict-allow-scripts`, so `npm install` fails on any dependency whose install script is not listed in `allowScripts` in `package.json`. Review the script, then `npm install-scripts approve <pkg>`. Upgrading an approved package (esbuild, better-sqlite3) needs the same approval again, because entries are pinned to a version.
 - Committing generated or private material: `renders/`, `outputs/`, `imports/`, `video-projects/`, `image-projects/`, `assets/voices/`, `.env`, `*.tsbuildinfo`. These are gitignored for a reason.
 - Media files (sound effects, music, fonts, logos) without a clear source and license.
 - A change to the render pipeline that skips the draft stage or the QC gate.

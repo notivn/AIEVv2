@@ -257,7 +257,7 @@ function resolveModel(model?: string | null): string {
 }
 
 function geminiEndpoint(model: string): string {
-  return `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`;
+  return `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(model)}:generateContent`;
 }
 
 /** Gọi một lượt generateContent, trả text thô + token đã dùng */
@@ -402,8 +402,6 @@ export async function translateCues(input: TranslateCuesInput): Promise<{ cues: 
   );
 
   const out: TranslatedCue[] = [];
-  let inTokTotal = 0;
-  let outTokTotal = 0;
 
   for (let b = 0; b < batches.length; b += 1) {
     // Kiểm tra hủy GIỮA các lô: một lô có thể chạy 10-30s, không chờ hết bài
@@ -421,8 +419,9 @@ export async function translateCues(input: TranslateCuesInput): Promise<{ cues: 
     let lastProblem = "";
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       const call = await callGemini({ prompt, model, apiKey, isCanceled });
-      inTokTotal += call.inTok;
-      outTokTotal += call.outTok;
+      // Ghi NGAY từng lượt chứ không cộng dồn tới cuối: lô sau hỏng là hàm ném
+      // lỗi, và mọi lô trước đó (Google đã tính tiền thật) biến mất khỏi Dashboard
+      recordUsage(input, call.inTok, call.outTok);
 
       const parsed = firstJsonObject(call.text);
       if (!parsed) {
@@ -474,17 +473,22 @@ export async function translateCues(input: TranslateCuesInput): Promise<{ cues: 
     onLog?.(`Lô ${b + 1}/${batches.length} xong (${out.length}/${cues.length} câu)`);
   }
 
-  // Ghi nhận token Gemini cho biểu đồ Dashboard - phụ trợ, không được phép làm
-  // hỏng luồng chính nên nuốt mọi lỗi (đúng như gemini.ts).
+  return { cues: out };
+}
+
+/**
+ * Ghi nhận token Gemini của MỘT lượt gọi cho biểu đồ Dashboard - phụ trợ, không
+ * được phép làm hỏng luồng chính nên nuốt mọi lỗi (đúng như gemini.ts).
+ */
+function recordUsage(input: TranslateCuesInput, inTok: number, outTok: number): void {
   try {
-    if (inTokTotal > 0 || outTokTotal > 0) {
-      const costUsd =
-        (inTokTotal * PRICE_IN_PER_M) / 1_000_000 + (outTokTotal * PRICE_OUT_PER_M) / 1_000_000;
+    if (inTok > 0 || outTok > 0) {
+      const costUsd = (inTok * PRICE_IN_PER_M) / 1_000_000 + (outTok * PRICE_OUT_PER_M) / 1_000_000;
       addTokenUsage(
         `${input.usageTag}_${input.projectId ?? "unknown"}`,
         input.projectId ?? null,
-        inTokTotal,
-        outTokTotal,
+        inTok,
+        outTok,
         costUsd,
         "gemini",
       );
@@ -492,8 +496,6 @@ export async function translateCues(input: TranslateCuesInput): Promise<{ cues: 
   } catch {
     /* usage là phụ - không chặn luồng chính */
   }
-
-  return { cues: out };
 }
 
 /** Chia cue thành các lô theo trần ký tự + trần số mục (xem hằng số ở đầu file) */

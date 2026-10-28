@@ -88,7 +88,7 @@ frame Remotion dựng song song. Hai job của **cùng một project** không ba
 
 ## Yêu cầu
 
-- **Node.js 22+** (HyperFrames yêu cầu `>=22`)
+- **Node.js 24 LTS** (hoặc 22.23.4+ / 26.12.1+ - bản vá bảo mật tháng 10/2026; HyperFrames yêu cầu `>=22`)
 - **FFmpeg** trên PATH (macOS: `brew install ffmpeg`)
 - **Google Chrome** (HyperFrames và Remotion render qua headless Chromium)
 - **Claude**: đăng nhập [Claude Code](https://claude.com/claude-code) trên máy (dùng subscription OAuth - khuyên dùng) *hoặc* điền `ANTHROPIC_API_KEY` vào `.env`
@@ -260,6 +260,14 @@ Phát hiện lỗ hổng bảo mật? Đừng mở issue công khai, làm theo [
 > Remotion miễn phí cho cá nhân và công ty tối đa 3 người; vượt mức đó cần
 > [Company License](https://remotion.pro) - và trình chỉnh sửa video có nhúng Remotion Player, phần mà
 > Remotion cấp phép theo gói "Automators" cho các công ty đó. Chi phí Claude và Gemini tính vào tài khoản của bạn.
+>
+> **Ngoại lệ - thư mục `gateways/`.** Hai gateway tạo ảnh tùy chọn **không phải MIT**: `gateways/chatgpt/`
+> (vendored [chatgpt2api](https://github.com/yukkcat/chatgpt2api)) và `gateways/gemini-web/` (dựa trên
+> [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API)) theo **AGPL-3.0**, mỗi thư mục có `LICENSE` riêng.
+> Chúng chạy thành tiến trình riêng (sidecar chỉ nghe 127.0.0.1 và một worker stdin/stdout) bằng venv riêng
+> `.runtime/venv-gateway`, chỉ được cài khi bạn chủ động bật (Cấu hình → Image gateway).
+> `gateways/gemini-watermark-remover/` là MIT. Dùng tài khoản ChatGPT / Google qua chúng phải tuân theo điều
+> khoản của các dịch vụ đó - đó là lựa chọn của bạn.
 >
 ### Asset: repo ship code, không ship media
 

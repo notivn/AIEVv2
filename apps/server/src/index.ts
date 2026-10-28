@@ -14,10 +14,17 @@ import {
 import { autoResumeStartup } from "./agent.js";
 import { scanAutoCuts, patchAutoCut } from "./autoCutMeta.js";
 import { patchTranslateVideo, scanTranslateVideos } from "./translateVideoMeta.js";
+import { scanImageProjects, writeImageMeta } from "./imageMeta.js";
 import { failStaleRunningJobs, hasActiveJobForProject } from "./db.js";
 import { addSseClient } from "./events.js";
-import { HttpError, cookieValue, isLocalRequest, secretEquals } from "./util.js";
-import { isKnownUploadToken } from "./routes/uploadSession.js";
+import {
+  HttpError,
+  cookieAuthAllowed,
+  cookieValue,
+  isLocalRequest,
+  secretEquals,
+} from "./util.js";
+import { isKnownUploadToken, isValidUploadToken } from "./routes/uploadSession.js";
 
 import healthRouter from "./routes/health.js";
 import overviewRouter from "./routes/overview.js";
@@ -38,6 +45,12 @@ import imagesRouter from "./routes/images.js";
 import connectionsRouter from "./routes/connections.js";
 import renderSettingsRouter from "./routes/renderSettingsRoute.js";
 import illustrationsRouter from "./routes/illustrations.js";
+import gatewaysRouter from "./routes/gateways.js";
+import imageProvidersRouter from "./routes/imageProviders.js";
+import generateImageRouter from "./routes/generateImage.js";
+import generateTextRouter from "./routes/generateText.js";
+import projectSourceRouter from "./routes/projectSource.js";
+import narrationRouter from "./routes/narration.js";
 import thumbnailsRouter from "./routes/thumbnails.js";
 import publishRouter from "./routes/publish.js";
 import qcRouter from "./routes/qc.js";
@@ -68,7 +81,10 @@ failStaleRunningJobs();
 // Chỉ quét LÚC KHỞI ĐỘNG: lúc này chắc chắn không có gì đang chạy thật, còn quét
 // lúc đọc thì sẽ chữa nhầm phiên vừa bị hủy mà job chưa kịp dừng hẳn.
 for (const m of scanAutoCuts()) {
-  if ((m.status === "planning" || m.status === "cutting") && !hasActiveJobForProject(m.id)) {
+  if (
+    (m.status === "planning" || m.status === "cutting") &&
+    !hasActiveJobForProject(m.id, "auto-cut")
+  ) {
     patchAutoCut(m.id, {
       status: "failed",
       error: "Server khởi động lại giữa chừng - chạy lại bước này.",
@@ -79,7 +95,7 @@ for (const m of scanAutoCuts()) {
 for (const m of scanTranslateVideos()) {
   if (
     (m.status === "transcribing" || m.status === "rendering" || m.status === "translating") &&
-    !hasActiveJobForProject(m.id)
+    !hasActiveJobForProject(m.id, "translate-video")
   ) {
     patchTranslateVideo(m.id, {
       status:
@@ -92,9 +108,29 @@ for (const m of scanTranslateVideos()) {
     });
   }
 }
+// Image project cũng vậy: job image-gen vừa bị đánh failed nhưng meta vẫn
+// "generating" - trang chi tiết khóa nút tạo ảnh/hoàn thiện/tải nền mãi mãi
+for (const m of scanImageProjects()) {
+  if (m.status === "generating" && !hasActiveJobForProject(m.id, "image")) {
+    writeImageMeta(m.id, {
+      ...m,
+      status: "error",
+      error: "Server khởi động lại khi đang tạo ảnh - chạy lại bước này.",
+    });
+  }
+}
 
 const app = express();
 app.disable("x-powered-by");
+
+// Header an toàn cho MỌI phản hồi backend (JSON, /media, SSE): không đoán MIME,
+// không gửi Referer (URL có thể mang ?t= / ?k=), không cho trang khác nhúng khung
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
 
 // CORS cho web UI :6868 - localhost (dev/debug) + IP LAN private (trang /m
 // trên điện thoại upload file lớn gọi thẳng backend, không qua proxy Next)
@@ -135,13 +171,29 @@ function queryString(value: unknown): string {
  * hơn, để không cho qua thứ mà router lại hiểu khác đi.
  */
 const UPLOAD_TOKEN_ROUTES: ReadonlyArray<{ method: string; re: RegExp }> = [
-  { method: "GET", re: /^\/api\/projects\/[^/]+$/ },
+  { method: "GET", re: /^\/api\/projects\/([^/]+)$/ },
   { method: "POST", re: /^\/api\/assets$/ },
 ];
 
-function allowedForUploadToken(req: Request): boolean {
-  const p = req.path.toLowerCase().replace(/(.)\/$/, "$1");
-  return UPLOAD_TOKEN_ROUTES.some((r) => r.method === req.method && r.re.test(p));
+/**
+ * Token QR gắn với MỘT project: GET project phải đúng project của token (trước
+ * đây token nào còn hạn cũng đọc được meta của MỌI project). POST /api/assets
+ * mang projectId trong body multipart - route assets tự kiểm isValidUploadToken.
+ */
+function allowedForUploadToken(req: Request, k: string): boolean {
+  const p = req.path.replace(/(.)\/$/, "$1");
+  return UPLOAD_TOKEN_ROUTES.some((r) => {
+    if (r.method !== req.method) return false;
+    // So khớp không phân biệt hoa thường như router, nhưng lấy id từ đường dẫn GỐC
+    const m = r.re.exec(p.toLowerCase());
+    if (!m) return false;
+    if (m[1] === undefined) return true;
+    try {
+      return isValidUploadToken(k, decodeURIComponent(p.slice(p.lastIndexOf("/") + 1)));
+    } catch {
+      return false; // %-encoding hỏng
+    }
+  });
 }
 
 /**
@@ -155,7 +207,8 @@ function allowedForUploadToken(req: Request): boolean {
  *  (c) request TRỰC TIẾP từ máy chủ (loopback, không qua proxy) - dashboard
  *      trên máy này, agent Claude, curl, script start
  *  (d) header `x-aiev-token` khớp AIEV_API_TOKEN (fetch của web dashboard)
- *  (e) cookie `aiev_token` khớp (img/video/EventSource - không set được header)
+ *  (e) cookie `aiev_token` khớp, CHỈ với GET/HEAD (img/video/EventSource -
+ *      không set được header); cookie do POST /api/session đặt, HttpOnly
  *  (f) query `?t=` khớp (mở dashboard qua tunnel bằng link có token)
  *  (g) query `?k=` là token phiên upload QR còn hiệu lực (trang /m)
  */
@@ -178,7 +231,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     next();
     return;
   }
-  if (secretEquals(cookieValue(req, "aiev_token"), token)) {
+  // Cookie chỉ mở đường ĐỌC - xem cookieAuthAllowed ở util.ts
+  if (cookieAuthAllowed(req) && secretEquals(cookieValue(req, "aiev_token"), token)) {
     next();
     return;
   }
@@ -187,7 +241,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     return;
   }
   const k = queryString(req.query.k);
-  if (k && isKnownUploadToken(k) && allowedForUploadToken(req)) {
+  if (k && isKnownUploadToken(k) && allowedForUploadToken(req, k)) {
     next();
     return;
   }
@@ -197,6 +251,23 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 app.use(express.json({ limit: "20mb" }));
+
+/**
+ * POST /api/session → 204 + Set-Cookie `aiev_token` (đã qua xác thực ở trên,
+ * dashboard gọi kèm header token). Cookie do SERVER đặt để được HttpOnly: cookie
+ * không phân biệt cổng, nên bản cũ đặt bằng document.cookie thì mọi trang trên
+ * localhost (HyperFrames Studio :3002, Remotion Studio, dev server khác) đọc
+ * được token chính. Gọi same-origin qua proxy Next để cookie gắn đúng host
+ * dashboard đang mở (localhost, IP LAN hay domain tunnel).
+ */
+app.post("/api/session", (req: Request, res: Response) => {
+  const https = String(req.headers["x-forwarded-proto"] ?? "").includes("https");
+  res.setHeader(
+    "Set-Cookie",
+    `aiev_token=${encodeURIComponent(apiToken())}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict${https ? "; Secure" : ""}`,
+  );
+  res.status(204).end();
+});
 
 // SSE - một stream chung cho job/joblog/agent
 app.get("/api/events", addSseClient);
@@ -243,6 +314,17 @@ app.use("/api/images", imagesRouter);
 app.use("/api/connections", connectionsRouter);
 app.use("/api/render-settings", renderSettingsRouter);
 app.use("/api/illustrations", illustrationsRouter);
+// Gateway tạo ảnh bằng tài khoản web (ChatGPT / Gemini) + chọn nhà cung cấp mặc định
+app.use("/api/gateways", gatewaysRouter);
+app.use("/api/image-providers", imageProvidersRouter);
+// POST/GET /api/projects/:id/generate-image - cảnh trám/layer ảnh AI từ trình chỉnh sửa (task nền)
+app.use("/api/projects", generateImageRouter);
+// POST /api/projects/:id/generate-text - một dòng chữ AI viết cho layer chữ tại một mốc timeline
+app.use("/api/projects", generateTextRouter);
+// GET/POST /api/projects/:id/source/article - nguồn "Link bài viết" của Video Project
+app.use("/api/projects", projectSourceRouter);
+// POST/GET /api/projects/:id/narration - giọng đọc cho video không footage (TTS theo brief / file thu sẵn)
+app.use("/api/projects", narrationRouter);
 app.use("/api/update", updateRouter);
 app.use("/api/reveal", revealRouter);
 app.use("/api/tunnel", tunnelRouter);

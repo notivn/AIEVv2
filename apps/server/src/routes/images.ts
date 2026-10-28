@@ -56,6 +56,8 @@ const upload = multer({
 
 function parseImageModel(raw: unknown, fallback: string | null): string | null {
   if (raw === undefined || raw === null || raw === "") return raw === undefined ? fallback : null;
+  // Nhà cung cấp tạo ảnh (docs/EDITOR-V2-PLAN.md §4.3) - jobs/imageGen.ts định tuyến
+  if (raw === "auto" || raw === "gemini-api" || raw === "chatgpt-web" || raw === "gemini-web") return raw;
   // Chấp nhận cả model mới từ danh sách live của Google (không chỉ IMAGE_MODELS tĩnh) -
   // miễn là id hợp lệ và có "image" trong tên
   if (
@@ -233,7 +235,20 @@ router.delete("/:id", (req, res) => {
   if (!fs.existsSync(imageDirOf(id))) {
     throw new HttpError(404, "IMAGE_NOT_FOUND", `Không tìm thấy image project "${id}"`);
   }
+  // Job đang chạy/chờ vẫn ghi vào thư mục này: xóa lúc đó thì bước tạo nền tự
+  // dựng lại thư mục rồi ghi background.png - thành thư mục mồ côi không có
+  // meta.json, UI không thấy mà cũng không dọn được (lượt ảnh vẫn bị trừ)
+  if (db.hasActiveJobForProject(id, "image")) {
+    throw new HttpError(
+      409,
+      "JOB_RUNNING",
+      "Image project đang có job chạy/chờ trong hàng đợi - đợi xong hoặc hủy job rồi mới xóa",
+    );
+  }
   fs.rmSync(imageDirOf(id), { recursive: true, force: true });
+  // Bản stage trong Remotion public/ là hardlink - để lại thì ảnh nền vừa xóa vẫn
+  // chiếm dung lượng, và không còn project nào để nút "Xóa file rác" dọn nó
+  fs.rmSync(path.join(paths.stagingDir, `img-${id}`), { recursive: true, force: true });
   res.status(204).end();
 });
 
@@ -378,7 +393,7 @@ router.get("/:id/junk", (req, res) => {
 // POST /api/images/:id/junk/clean - xóa file rác; job running/queued của project → 409
 router.post("/:id/junk/clean", (req, res) => {
   const meta = readImageMeta(req.params.id); // ném 404 nếu không có
-  if (db.hasActiveJobForProject(meta.id)) {
+  if (db.hasActiveJobForProject(meta.id, "image")) {
     throw new HttpError(
       409,
       "JOB_RUNNING",

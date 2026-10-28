@@ -73,10 +73,12 @@ import { Field } from "@/components/Field";
 import { IconButton } from "@/components/IconButton";
 import {
   AspectChip,
+  ImageModelOptions,
   ImageProjectFields,
   ImageStatusBadge,
   KIND_LABEL,
   useGeminiImageModels,
+  useImageModelChoices,
   type ImageDraft,
 } from "@/components/ImageProjectForm";
 import { PageHeader } from "@/components/PageHeader";
@@ -441,15 +443,16 @@ export default function ImageProjectDetailPage() {
     }
   }
 
-  const geminiTooltip = geminiConnected
-    ? undefined
-    : t("imageDetail.gemini-tooltip");
-
   // Select model gọn ở cột thiết lập - live list, fallback danh sách tĩnh
   const currentModel = draft?.model ?? proj?.model ?? null;
   const modelOptions = liveModels ?? gemini?.models ?? [];
-  const modelMissing =
-    currentModel !== null && !modelOptions.some((m) => m.id === currentModel);
+  // Provider (Tự động / ChatGPT web / Gemini web) + model đã lưu nằm ngoài danh sách
+  const modelChoices = useImageModelChoices(currentModel, modelOptions);
+
+  // Tạo nền được khi có ÍT NHẤT một nhà cung cấp: Gemini API, hoặc tài khoản
+  // ChatGPT web / cookie Gemini web (gateway) - không chỉ riêng GEMINI_API_KEY
+  const canGenerate = geminiConnected || modelChoices.anyWebConfigured;
+  const geminiTooltip = canGenerate ? undefined : t("imageDetail.gemini-tooltip");
 
   // Tỉ lệ khung của khung ảnh thành phẩm - "9:16" của meta đổi sang cú pháp CSS
   const aspectRatio = (proj?.aspect ?? "9:16").replace(":", " / ");
@@ -591,7 +594,7 @@ export default function ImageProjectDetailPage() {
               <span title={geminiTooltip} className="block">
                 <Button
                   className="w-full"
-                  disabled={genSubmitting || generating || !geminiConnected}
+                  disabled={genSubmitting || generating || !canGenerate}
                   onClick={() => runGenerate("all")}
                 >
                   <Zap size={15} strokeWidth={2} />
@@ -608,7 +611,7 @@ export default function ImageProjectDetailPage() {
                     ? t("images.loading-models")
                     : modelSaving
                       ? t("common.saving")
-                      : undefined
+                      : modelChoices.hint
                 }
               >
                 <select
@@ -619,15 +622,11 @@ export default function ImageProjectDetailPage() {
                   onFocus={loadModels}
                   onChange={(e) => onModelChange(e.target.value || null)}
                 >
-                  <option value="">{t("images.model-default")}</option>
-                  {modelMissing && (
-                    <option value={currentModel!}>{currentModel}</option>
-                  )}
-                  {modelOptions.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
+                  <ImageModelOptions
+                    current={currentModel}
+                    geminiModels={modelOptions}
+                    choices={modelChoices}
+                  />
                 </select>
               </Field>
 
@@ -638,7 +637,7 @@ export default function ImageProjectDetailPage() {
                     variant="secondary"
                     small
                     className="w-full"
-                    disabled={genSubmitting || generating || !geminiConnected}
+                    disabled={genSubmitting || generating || !canGenerate}
                     onClick={() => runGenerate("background")}
                   >
                     <Wand2 size={14} strokeWidth={2} />
@@ -661,7 +660,7 @@ export default function ImageProjectDetailPage() {
                   </Button>
                 </span>
               </div>
-              {!geminiConnected && gemini && (
+              {!canGenerate && gemini && (
                 <p className="text-meta text-[var(--text-muted)]">
                   {t("imageDetail.gemini-hint")}
                 </p>

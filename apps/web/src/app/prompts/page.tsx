@@ -131,7 +131,12 @@ export default function PromptsPage() {
               <Button
                 variant="secondary"
                 disabled={saving}
-                onClick={() => setEditor(null)}
+                onClick={() => {
+                  // Lỗi lưu là của prompt VỪA sửa - không để nó treo sang lần
+                  // mở form kế tiếp (prompt khác / tạo mới)
+                  setSaveError(null);
+                  setEditor(null);
+                }}
               >
                 <ArrowLeft size={15} strokeWidth={2} />
                 {t("common.back-to-list")}

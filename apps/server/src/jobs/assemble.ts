@@ -13,7 +13,13 @@ import {
 } from "../meta.js";
 import { syncBrandLogo } from "../childProject.js";
 import { getStyle } from "../styles.js";
-import { dropNullOptionalKeys, isRenderStale, sceneRenderState } from "../timeline.js";
+import {
+  dropNullOptionalKeys,
+  isRenderStale,
+  probeMediaInfo,
+  sceneDurationFrames,
+  sceneRenderState,
+} from "../timeline.js";
 import { ensureDir, remotionCli } from "../util.js";
 import { remotionSpeedArgs } from "../renderSettings.js";
 import { parseProgressLine, shortenStep } from "./progress.js";
@@ -159,19 +165,12 @@ export async function runAssemble(ctx: JobCtx): Promise<void> {
   // không đụng - chỉ kẹp phần vượt quá, giữ nguyên output của manifest đang chạy tốt.
   {
     // Cách tính thời lượng frame khớp resolveSceneDurationInFrames bên Remotion:
-    // durationInFrames, hoặc scene srcVideo suy từ round(to*fps) - round(from*fps).
-    const frameOf = (scene: SceneMeta): number | null => {
-      if (typeof scene.durationInFrames === "number") return scene.durationInFrames;
-      if (
-        typeof scene.srcVideo === "string" &&
-        scene.srcVideo &&
-        typeof scene.from === "number" &&
-        typeof scene.to === "number"
-      ) {
-        return Math.max(1, Math.round(scene.to * props.fps) - Math.round(scene.from * props.fps));
-      }
-      return null; // thiếu thời lượng - để Remotion tự báo lỗi rõ ở bước render
-    };
+    // durationInFrames, hoặc scene srcVideo suy từ (round(to*fps) - round(from*fps)) / speed.
+    // Có `speed` (EDITOR-V2) thì chia tốc độ sau khi làm tròn hai đầu - helper
+    // dùng chung sceneDurationFrames (song sinh của engines/remotion/src/duration.ts).
+    // null = thiếu thời lượng - để Remotion tự báo lỗi rõ ở bước render.
+    const frameOf = (scene: SceneMeta): number | null =>
+      sceneDurationFrames(scene as unknown as Record<string, unknown>, props.fps);
     const scenes = props.scenes ?? [];
     for (let i = 0; i < scenes.length; i++) {
       const overlap = scenes[i].transitionOverlap;
@@ -246,12 +245,38 @@ export async function runAssemble(ctx: JobCtx): Promise<void> {
       }
     });
     for (const sfx of props.audio.sfx ?? []) {
-      if (typeof sfx.file === "string" && sfx.file) sfx.file = stage(sfx.file);
+      if (typeof sfx.file !== "string" || !sfx.file) continue;
+      // Fade ra của sfx tính ngược từ CUỐI file - engine cần độ dài file
+      // (`mediaDurationSec`, chỉ có ở props.resolved.json). stage() chạy TRƯỚC
+      // vì nó là hàng rào traversal - không đo file ngoài project. Đo hỏng thì
+      // bỏ fade ra (không chặn render).
+      const rel = sfx.file;
+      sfx.file = stage(rel);
+      if (typeof sfx.fadeOutSec === "number" && sfx.fadeOutSec > 0) {
+        const info = await probeMediaInfo(path.join(projectDir, rel));
+        if (info?.durationSec) sfx.mediaDurationSec = info.durationSec;
+      }
     }
     // Nhạc nền (file đã copy vào assets/ của project - xem skill background-music)
     const music = props.audio.music;
     if (music && typeof music.file === "string" && music.file) {
       music.file = stage(music.file);
+    }
+  }
+
+  // ---- Layer chồng (EDITOR-V2 mục 1.2) ----
+  // Layer ảnh/video: stage `src` như mọi media khác + điền `mediaAspect` (tỉ lệ
+  // khung THẬT của file, ffprobe) - đúng thứ trình phát lấy từ preview.media,
+  // để hộp layer trong video ra đúng cỡ như lúc xem trước (layerBox dùng chung).
+  const layers = (props as ProjectMeta & { layers?: unknown }).layers;
+  if (Array.isArray(layers)) {
+    for (const layer of layers as Array<Record<string, unknown>>) {
+      if (!layer || typeof layer !== "object") continue;
+      if (typeof layer.src !== "string" || !layer.src) continue;
+      const rel = layer.src;
+      layer.src = stage(rel); // hàng rào traversal trước, rồi mới đo
+      const info = await probeMediaInfo(path.join(projectDir, rel));
+      if (info?.width && info.height) layer.mediaAspect = info.width / info.height;
     }
   }
 

@@ -1053,7 +1053,9 @@ export default function TranslateVideoDetailPage() {
     if (!p.sourceLang) setSourceLang(s.sourceLang || "auto");
     if (!p.targetLang) setTargetLang(s.targetLang || "vi");
     if (!p.mode) setMode(s.mode ?? "subtitle");
-    if (!p.dubLang) setDubLang(s.dubLang ?? null);
+    // Hỏi "có trong hàng chờ không", KHÔNG hỏi giá trị: null đang chờ gửi (= đọc
+    // đúng ngôn ngữ phụ đề) cũng là một thay đổi chưa lưu, không được bị đè
+    if (!("dubLang" in p)) setDubLang(s.dubLang ?? null);
     if (!p.sttProvider) setSttProvider(s.sttProvider ?? "local");
     if (!p.cues) setCues(s.cues ?? []);
     // Phiên tạo trước khi backend có đủ field → lấp bằng mặc định
@@ -1144,6 +1146,16 @@ export default function TranslateVideoDetailPage() {
       try {
         const s = await updateTranslateVideo(sessionId, patch);
         setSession(s);
+        // Đổi ngôn ngữ thì SERVER viết lại cues (trả chữ về câu gốc, bỏ dubText,
+        // hoặc xóa hẳn khi đổi ngôn ngữ nguồn). Bản nháp phải nhận lại bản đó:
+        // giữ bản nháp cũ thì lần sửa câu kế tiếp gửi ngược bản dịch đã bị vứt
+        // lên đè - kể cả dubText của ngôn ngữ cũ, và bước lồng tiếng đọc sai tiếng.
+        if (
+          ("sourceLang" in patch || "targetLang" in patch || "dubLang" in patch) &&
+          !pending.current.cues
+        ) {
+          setCues(s.cues ?? []);
+        }
         setSaveError(null);
         return null;
       } catch (e) {
@@ -1398,7 +1410,15 @@ export default function TranslateVideoDetailPage() {
     );
   }
 
-  const running = RUNNING_STATUS.includes(session.status);
+  const running =
+    RUNNING_STATUS.includes(session.status) ||
+    // Dịch là request ĐỒNG BỘ: trong lúc chờ, `session` ở trang vẫn là bản trước
+    // đó (chưa ai nạp lại) nên không thấy "translating". Không khóa thì sửa câu
+    // lúc này ăn 409 BUSY, và bản nháp kẹt trong hàng chờ đè lên bản dịch vừa về.
+    busy === "translate" ||
+    // Job đã xếp hàng nhưng chưa tới lượt: trạng thái phiên chưa đổi mà server đã
+    // chặn mọi lần sửa (409 BUSY) - cùng một cái bẫy như trên
+    job?.status === "queued";
   // Ô nhập chỉ khóa khi có việc đang chạy - xong rồi vẫn sửa & chạy lại được
   const locked = running;
   const stage = deriveTvStage(session);

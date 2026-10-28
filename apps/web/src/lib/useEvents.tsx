@@ -62,6 +62,11 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const uploadHandlers = useRef(new Set<UploadHandler>());
 
   useEffect(() => {
+    // Trang /m trên điện thoại đi bằng token phiên QR (?k=), mà backend không cho
+    // token đó mở /api/events: mở stream ở đây chỉ nhận 401 rồi thử lại mỗi 3s
+    // suốt lúc điện thoại đang upload. Trang /m cũng không nghe event nào.
+    const path = window.location.pathname;
+    if (path === "/m" || path.startsWith("/m/")) return;
     let es: EventSource | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let disposed = false;

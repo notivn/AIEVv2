@@ -70,8 +70,10 @@ import {
   getJobs,
   getProject,
   getProjectJunk,
+  isVideoProjectJob,
   mediaUrl,
   renameProject,
+  startEditorRender,
   startProjectEdit,
   updateBrief,
   updateProjectTags,
@@ -79,6 +81,7 @@ import {
   type Brief,
   type ChatSession,
   type FileInfo,
+  type FinishMode,
   type Job,
   type JobType,
   type ProjectDetail,
@@ -92,6 +95,7 @@ import { Button } from "@/components/Button";
 import { Field } from "@/components/Field";
 import { IconButton } from "@/components/IconButton";
 import { Panel } from "@/components/Panel";
+import { Segmented } from "@/components/Segmented";
 import { Skeleton } from "@/components/Skeleton";
 import { ChatThread } from "@/components/ChatThread";
 import { CloneProjectModal } from "@/components/CloneProjectModal";
@@ -120,6 +124,7 @@ import {
   SFX_MODE_LABEL,
 } from "@/components/BriefFields";
 import { ProjectAssetsCard } from "@/components/ProjectAssetsCard";
+import { ProjectSourceCard } from "@/components/ProjectSourceCard";
 import { ProjectAutoTrimCard } from "@/components/ProjectAutoTrimCard";
 import { ProjectClipsCard } from "@/components/ProjectClipsCard";
 import { ProjectReviewCard } from "@/components/ProjectReviewCard";
@@ -639,6 +644,7 @@ export default function ProjectDetailPage() {
   // AI đang edit → asset/render/scene cập nhật sống: refresh khi AI ghi file
   // (Write/Edit/Bash), throttle 3s để không dội API; refresh lần cuối khi done.
   const lastAutoRefreshRef = useRef(0);
+  const lastSessionsRefreshRef = useRef(0);
   useAgentEvents((e) => {
     const belongs =
       sessionIdsRef.current.has(e.sessionId) ||
@@ -649,7 +655,20 @@ export default function ProjectDetailPage() {
       if (belongs) load();
       return;
     }
-    if (!belongs || e.kind !== "tool") return;
+    if (!belongs) return;
+    // Phiên chạy lại mà KHÔNG có event "bắt đầu" nào: gửi tiếp tin nhắn trong
+    // phiên cũ ở panel AI, server tự chạy lại sau lỗi (auto-resume) hoặc sau khi
+    // khởi động lại. Danh sách vẫn ghi done/error → aiRunning kẹt false trong
+    // lúc AI đang sửa project. Có event mà danh sách nói không chạy → nạp lại.
+    const known = chatSessions?.find((s) => s.sessionId === e.sessionId);
+    if (known?.status !== "running") {
+      const now = Date.now();
+      if (now - lastSessionsRefreshRef.current >= 3000) {
+        lastSessionsRefreshRef.current = now;
+        loadSessions();
+      }
+    }
+    if (e.kind !== "tool") return;
     const name = e.tool?.name;
     if (name === "Write" || name === "Edit" || name === "Bash") {
       const now = Date.now();
@@ -667,7 +686,7 @@ export default function ProjectDetailPage() {
     let alive = true;
     getJobs(50, projectId)
       .then((list) => {
-        if (alive) setJobs(list);
+        if (alive) setJobs(list.filter((j) => isVideoProjectJob(j)));
       })
       .catch(() => {
         // không có jobs cũng không chặn trang - timeline tự ẩn/suy từ file
@@ -680,7 +699,7 @@ export default function ProjectDetailPage() {
   // Refetch khi có job của project này đổi trạng thái kết thúc
   // + upsert vào state jobs để timeline giai đoạn cập nhật sống
   useJobEvents((job) => {
-    if (job.projectId !== projectId) return;
+    if (!isVideoProjectJob(job, projectId)) return;
     setJobs((prev) => {
       const i = prev.findIndex((j) => j.id === job.id);
       if (i === -1) return [job, ...prev];
@@ -752,6 +771,28 @@ export default function ProjectDetailPage() {
     setBriefSaved(false);
     if (briefTimer.current) clearTimeout(briefTimer.current);
     briefTimer.current = setTimeout(flushBrief, BRIEF_DEBOUNCE_MS);
+  }
+
+  /**
+   * "Xuất final" từ khối bản nháp: đi đúng đường của trình chỉnh sửa (render lại
+   * scene final còn thiếu/cũ rồi assemble-final) - cổng QC vẫn do server chặn.
+   */
+  async function onExportFinal() {
+    setSubmitting(true);
+    setJobError(null);
+    setJobNotice(null);
+    try {
+      const { jobs: queued } = await startEditorRender(projectId, "final");
+      setJobNotice(tf("project.draftReady.queued", { n: queued.length }));
+    } catch (e) {
+      setJobError(
+        tf("project.job-error", {
+          error: e instanceof Error ? e.message : String(e),
+        })
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function submitJob(type: JobType, sceneId?: string) {
@@ -913,6 +954,32 @@ export default function ProjectDetailPage() {
   const runningJob = jobs.find((j) => j.status === "running") ?? null;
   const busyNow = aiRunning || runningJob !== null || project?.status === "rendering";
 
+  // Chế độ hoàn tất (brief.finishMode) - thiếu = "draft", đúng mặc định server
+  const finishMode: FinishMode = briefView.finishMode ?? "draft";
+
+  // "Bản nháp sẵn sàng": draft MỚI NHẤT chưa có final nào đi sau nó = phiên bản
+  // hiện tại chưa được xuất. Đọc từ lịch sử job (backend là nguồn sự thật), không
+  // suy từ file. Đang có AI/job chạy thì ẩn - bản draft đó có thể sắp bị thay.
+  const lastDoneAt = (type: JobType): number => {
+    let best = -Infinity;
+    for (const j of jobs) {
+      if (j.type !== type || j.status !== "done" || !j.finishedAt) continue;
+      const at = Date.parse(j.finishedAt);
+      if (Number.isFinite(at) && at > best) best = at;
+    }
+    return best;
+  };
+  const lastDraftAt = lastDoneAt("assemble-draft");
+  // Job còn CHỜ trong hàng đợi cũng là bận: bấm "Xuất final" lúc hàng đợi đang
+  // chạy project khác thì job nằm "queued", khối này còn hiện là mời bấm lần
+  // hai - server không gộp job trùng nên ra hai lượt render final.
+  const jobQueued = jobs.some((j) => j.status === "queued");
+  const draftReady =
+    !busyNow &&
+    !jobQueued &&
+    lastDraftAt > -Infinity &&
+    lastDoneAt("assemble-final") < lastDraftAt;
+
   // Gấp/mở từng khối. Mặc định suy từ "project đã xong chưa" NGAY TRONG LÚC
   // RENDER, cố tình KHÔNG có useEffect nào đồng bộ trạng thái gấp theo status:
   // trang này bám SSE job + agent, mỗi dòng log hay mỗi lần job đổi tiến trình là
@@ -959,6 +1026,13 @@ export default function ProjectDetailPage() {
 
   const output = project?.output ?? null;
   const version = project?.updatedAt;
+  // Lắp draft và cắt tự động KHÔNG ghi meta.json (jobs/assemble.ts chỉ ghi khi
+  // final) nên updatedAt đứng yên sau khi chúng xong - ghép mốc job xong gần
+  // nhất vào version, không thì card duyệt draft vẫn phát bản draft cũ trong
+  // cache, card QC không thấy report đã cũ, báo cáo cắt không nạp lại tới khi F5.
+  const versionAfter = (at: number) =>
+    at > -Infinity ? `${version ?? ""}-${at}` : version;
+  const draftVersion = versionAfter(lastDraftAt);
   const outputUrl = output
     ? mediaUrl(output) + (version ? `?v=${encodeURIComponent(version)}` : "")
     : null;
@@ -1096,26 +1170,24 @@ export default function ProjectDetailPage() {
                 <ArrowLeft size={15} strokeWidth={2} />
                 {t("project.back")}
               </Button>
-              {/* Trình chỉnh sửa cần ít nhất một scene để có gì mà xem/sửa - chưa
-                  có thì nút vẫn hiện (người dùng biết là có tính năng) nhưng tắt,
-                  kèm lý do ở tooltip + mô tả cho trình đọc màn hình. */}
-              <Button
-                disabled={scenes.length === 0}
-                title={scenes.length === 0 ? t("project.open-editor-hint") : undefined}
-                aria-describedby={scenes.length === 0 ? "open-editor-hint" : undefined}
-                onClick={() => router.push(`/projects/${encodeURIComponent(projectId)}/editor`)}
-              >
+              {/* Mở được cả khi chưa có scene: trình chỉnh sửa có sẵn trạng thái
+                  trống (dựng từ thư viện hoặc nhờ chat AI), render tự khóa tới khi
+                  có scene - không cần chặn ở đây. */}
+              <Button onClick={() => router.push(`/projects/${encodeURIComponent(projectId)}/editor`)}>
                 <SquarePen size={15} strokeWidth={2} />
                 {t("project.open-editor")}
               </Button>
-              {scenes.length === 0 && (
-                <span id="open-editor-hint" className="sr-only">
-                  {t("project.open-editor-hint")}
-                </span>
-              )}
             </span>
             <span className="flex items-center border-l border-[var(--border)] pl-2">
-              <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
+              {/* Mở lại modal thì bỏ lỗi lần xóa trước (vd 409 JOB_RUNNING khi
+                  job giờ đã xong) - để nguyên là báo một lỗi không còn đúng */}
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setDeleteError(null);
+                  setDeleteOpen(true);
+                }}
+              >
                 <Trash2 size={15} strokeWidth={2} />
                 {t("common.delete")}
               </Button>
@@ -1239,6 +1311,16 @@ export default function ProjectDetailPage() {
         <WorkspaceColumn role="source" title={t("workspace.col.source")}>
           {/* Các card này TỰ NÓ là một <Card> đầy đủ (tiêu đề + nút riêng) nên
               đứng thẳng trong cột, không bọc thêm WorkspaceBlock. */}
+          {/* Video dựng từ đâu: file tải lên / link bài viết / yêu cầu bằng chữ */}
+          <ProjectSourceCard
+            projectId={projectId}
+            brief={brief}
+            hasVideo={assets.some((f) => f.kind === "video")}
+            audioAssets={assets.filter((f) => f.kind === "audio")}
+            disabled={aiRunning}
+            onPatch={patchBrief}
+            onAssetsChanged={load}
+          />
           <ProjectAssetsCard
             compact={started}
             projectId={projectId}
@@ -1293,7 +1375,12 @@ export default function ProjectDetailPage() {
                 <p className="text-meta text-[var(--text-muted)]">
                   {briefSaved ? t("common.saved") : t("project.brief-autosave")}
                 </p>
-                <BriefFields value={brief} onChange={patchBrief} />
+                <BriefFields
+                  value={brief}
+                  onChange={patchBrief}
+                  // Nguồn bài viết / yêu cầu: không có "video gốc" nào để mô tả
+                  show={{ sourceDescription: brief.sourceKind === "video" }}
+                />
               </div>
             ) : (
               // Khung xám giữ đúng chỗ của biểu mẫu - câu "Đang tải…" biến mất
@@ -1318,6 +1405,66 @@ export default function ProjectDetailPage() {
             title={t("project.card-action")}
           >
             <div className="flex flex-col gap-3">
+              {/* Bản nháp đã dựng xong mà chưa xuất final (chế độ "AI dựng nháp,
+                  tôi duyệt") - hai bước kế tiếp đặt ngay đầu khối thao tác */}
+              {draftReady && (
+                <Panel
+                  title={t("project.draftReady.title")}
+                  actions={<Badge tone="success" label={t("project.draftReady.badge")} />}
+                >
+                  <div className="flex flex-col gap-3">
+                    <p className="text-sm text-[var(--text-muted)]">
+                      {t("project.draftReady.body")}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        small
+                        variant="secondary"
+                        onClick={() =>
+                          router.push(`/projects/${encodeURIComponent(projectId)}/editor`)
+                        }
+                      >
+                        <SquarePen size={14} strokeWidth={2} />
+                        {t("project.draftReady.open-editor")}
+                      </Button>
+                      <Button small disabled={submitting} onClick={onExportFinal}>
+                        <Play size={14} strokeWidth={2} />
+                        {t("project.draftReady.export")}
+                      </Button>
+                    </div>
+                  </div>
+                </Panel>
+              )}
+
+              {/* Điểm dừng của phiên AI - lưu vào brief.finishMode qua đường lưu
+                  brief sẵn có (debounce + flush trước khi bắt đầu edit) */}
+              <div className="flex flex-col gap-1">
+                <span className="text-sm">{t("project.mode.label")}</span>
+                <Segmented<FinishMode>
+                  label={t("project.mode.label")}
+                  value={finishMode}
+                  disabled={!brief}
+                  onChange={(v) => patchBrief({ finishMode: v })}
+                  options={[
+                    {
+                      value: "draft",
+                      label: t("project.mode.draft"),
+                      title: t("project.mode.draft-hint"),
+                    },
+                    {
+                      value: "final",
+                      label: t("project.mode.final"),
+                      title: t("project.mode.final-hint"),
+                    },
+                  ]}
+                />
+                <span className="text-meta text-[var(--text-muted)]">
+                  {finishMode === "draft"
+                    ? t("project.mode.draft-hint")
+                    : t("project.mode.final-hint")}
+                </span>
+              </div>
+
               <div className="flex items-center gap-2">
                 {/* Một cỡ nút duy nhất. Bản cũ phóng nút này lên h-12/15px khi
                     chưa bắt đầu - nút to nhất toàn app, và là bậc chữ thứ tư.
@@ -1467,7 +1614,7 @@ export default function ProjectDetailPage() {
           <ProjectReviewCard
             projectId={projectId}
             output={project?.output}
-            version={project?.updatedAt}
+            version={draftVersion}
             aiRunning={aiRunning}
           />
           {/* Cắt short + tái chế tỉ lệ: cũng là một yêu cầu "làm cho tôi cái này" */}
@@ -1689,12 +1836,16 @@ export default function ProjectDetailPage() {
           </WorkspaceBlock>
 
           {/* QC đo bản draft/final hiện có - card tự đủ, đứng thẳng trong cột */}
-          <ProjectQcCard projectId={projectId} onChanged={load} />
+          <ProjectQcCard
+            projectId={projectId}
+            version={draftVersion}
+            onChanged={load}
+          />
 
           {/* Báo cáo cắt tự động - tự ẩn khi project chưa chạy cắt lần nào */}
           <ProjectAutoTrimCard
             projectId={projectId}
-            version={project?.updatedAt}
+            version={versionAfter(lastDoneAt("auto-trim"))}
           />
 
           {/* Ảnh bìa của video - cũng là thứ sinh ra sau khi có thành phẩm */}
@@ -1869,6 +2020,9 @@ export default function ProjectDetailPage() {
           {t("project.edit-modal-desc")}
         </p>
         <Panel>
+          <BriefSummaryRow label={t("project.mode.label")}>
+            {finishMode === "draft" ? t("project.mode.draft") : t("project.mode.final")}
+          </BriefSummaryRow>
           <BriefSummaryRow label={t("project.sum-source")}>
             {briefView.sourceDescription.trim() || (
               <span className="text-[var(--text-muted)]">

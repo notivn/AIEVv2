@@ -1,0 +1,23 @@
+# Goi Python cho venv rieng cua gateway tao anh: .runtime/venv-gateway (Python >= 3.13).
+# Cai bang: node start/doctor.mjs --fix-one image-gateway  (hoac nut "Cai tu dong" o trang Cau hinh)
+# KHONG tron voi .runtime/venv (torch, vieneu, faster-whisper).
+#
+# --- gateways/chatgpt (chatgpt2api 3.2.2) - lay tu pyproject.toml cua upstream ---
+# Bo psycopg2-binary: AIEV chi chay SQLite (DATABASE_URL=sqlite:///...), khong can Postgres
+# va khong muon bat nguoi dung Windows bien dich psycopg2.
+# Can duoi + tran tren theo locks/uv.lock da va cua repo SEO-GEO (ban da chay that voi upstream
+# 3.2.2): upstream ghim ban co lo hong, con ban moi nhat (sqlalchemy 2.1, fastapi 0.16x, pillow 13)
+# chua ai thu voi ma nay. Nang tran thi chay lai smoke test (xem gateways/chatgpt/UPSTREAM.md).
+curl-cffi>=0.16.2,<0.17
+fastapi>=0.136.0,<0.137
+pillow>=12.3.0,<13
+pybase64>=1.4.3,<1.5
+python-multipart>=0.0.26
+tiktoken>=0.12.0,<0.13
+uvicorn>=0.44.0,<0.45
+sqlalchemy>=2.0.49,<2.1
+#
+# --- gateways/gemini-web (worker.py) ---
+# gemini-webapi tu ghim curl-cffi~=0.16.2 va pydantic~=2.12.5 - hai dong curl-cffi o tren
+# phai nam trong khoang do, neu khong pip bao xung dot.
+gemini-webapi==2.1.1

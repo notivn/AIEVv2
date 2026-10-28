@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { metaPathOf, projectDirOf, readMeta, type ProjectMeta } from "./meta.js";
+import { GRADE_PRESETS } from "./color.js";
 import { ensureDir, execFileCaptureAll, fileKind, nowIso } from "./util.js";
+import { ffprobeSafeArgs } from "./ffmpegSafe.js";
 
 /**
  * Logic thuần của trình chỉnh sửa video (docs/EDITOR-PLAN.md mục 1-2): tách khóa
@@ -30,7 +32,17 @@ export const TIMELINE_KEYS = [
   "subtitles",
   "subtitleStyle",
   "overlays",
+  // EDITOR-V2: layer chồng. Thêm vào CUỐI và chỉ góp vào version khi có mặt
+  // (xem versionOfRaw) - project chưa có layer giữ nguyên version cũ.
+  "layers",
 ] as const;
+
+/**
+ * Khóa thêm SAU hợp đồng version ban đầu: thiếu (null) thì KHÔNG đưa vào
+ * chuỗi băm, để version của mọi project cũ (và mọi tab đang mở) không đổi chỉ
+ * vì server biết thêm một khóa.
+ */
+const VERSION_OPTIONAL_KEYS: readonly TimelineKey[] = ["layers"];
 
 export type TimelineKey = (typeof TIMELINE_KEYS)[number];
 
@@ -45,9 +57,11 @@ export interface Timeline {
   /** Không có = mặc định của SubtitleTrack. KHÔNG bao giờ null (zod: optional, không nullable) */
   subtitleStyle?: Obj;
   overlays: Obj[];
+  /** Layer chồng - luôn là mảng trong bản trả client ([] khi chưa có) */
+  layers: Obj[];
 }
 
-/** Giá trị thô của 6 khóa đúng như trên đĩa - khóa thiếu = null */
+/** Giá trị thô của các khóa timeline đúng như trên đĩa - khóa thiếu = null */
 export type RawTimeline = Record<TimelineKey, unknown>;
 
 export interface TimelineIssue {
@@ -67,13 +81,18 @@ export function rawTimelineOf(meta: ProjectMeta): RawTimeline {
 }
 
 /**
- * sha1 (16 ký tự hex đầu) của JSON.stringify 6 khóa theo thứ tự cố định, khóa
- * thiếu = null. Đổi brief/tên/status KHÔNG đổi version - nên AI cập nhật status
- * hay người dùng đổi tên project không làm editor báo xung đột oan.
+ * sha1 (16 ký tự hex đầu) của JSON.stringify các khóa timeline theo thứ tự cố
+ * định, khóa thiếu = null - TRỪ khóa trong VERSION_OPTIONAL_KEYS (`layers`):
+ * thiếu thì bỏ hẳn khỏi object băm. Đổi brief/tên/status KHÔNG đổi version - nên
+ * AI cập nhật status hay người dùng đổi tên project không làm editor báo xung đột oan.
  */
 export function versionOfRaw(raw: RawTimeline): string {
   const ordered: Obj = {};
-  for (const key of TIMELINE_KEYS) ordered[key] = raw[key] ?? null;
+  for (const key of TIMELINE_KEYS) {
+    const v = raw[key] ?? null;
+    if (v === null && VERSION_OPTIONAL_KEYS.includes(key)) continue;
+    ordered[key] = v;
+  }
   return crypto.createHash("sha1").update(JSON.stringify(ordered)).digest("hex").slice(0, 16);
 }
 
@@ -101,6 +120,7 @@ export function timelineForClient(meta: ProjectMeta): Timeline {
     captions: arr(meta.captions),
     subtitles: arr(meta.subtitles),
     overlays: arr(meta.overlays),
+    layers: arr(meta.layers),
   };
   if (isObj(meta.subtitleStyle)) out.subtitleStyle = meta.subtitleStyle as Obj;
   return out;
@@ -254,6 +274,21 @@ function validateScenes(v: unknown, is: Issues): void {
     if (s.transitionOverlap !== undefined) is.int(s.transitionOverlap, `${p}.transitionOverlap`, 0);
     is.optBool(s, "muted", p);
     if (s.zoom !== undefined) validateZoom(s.zoom, `${p}.zoom`, is);
+    // EDITOR-V2 mục 1.1 - khung hình, màu, âm thanh, tốc độ, chuyển cảnh
+    is.optEnum(s, "fit", p, FIT_VALUES);
+    if (s.transform !== undefined) validateFrameTransform(s.transform, `${p}.transform`, is);
+    if (s.crop !== undefined) validateCrop(s.crop, `${p}.crop`, is);
+    if (s.color !== undefined) validateColorAdjust(s.color, `${p}.color`, is);
+    is.optNum(s, "volume", p, 0, 2);
+    is.optNum(s, "fadeInSec", p, 0, 10);
+    is.optNum(s, "fadeOutSec", p, 0, 10);
+    is.optNum(s, "speed", p, SPEED_MIN, SPEED_MAX);
+    if (s.transition !== undefined) {
+      if (!isObj(s.transition)) is.add(`${p}.transition`, "phải là object { type }");
+      else if (!TRANSITION_TYPES.includes(s.transition.type as string)) {
+        is.add(`${p}.transition.type`, `phải là một trong: ${TRANSITION_TYPES.join(" | ")}`);
+      }
+    }
 
     // Nguồn + thời lượng: khớp resolveSceneDurationInFrames của engine - chỉ
     // scene srcVideo có ĐỦ from/to mới được bỏ trống durationInFrames, mọi scene
@@ -267,6 +302,170 @@ function validateScenes(v: unknown, is: Issues): void {
         `${p}.durationInFrames`,
         "thiếu durationInFrames (chỉ scene srcVideo có đủ from/to mới được bỏ trống)",
       );
+    }
+  });
+}
+
+// ---- Kiểu dùng chung scene + layer (EDITOR-V2) - bám zod của engine manifest.ts
+
+const FIT_VALUES = ["cover", "contain"] as const;
+/** Song sinh của TRANSITION_TYPES trong engines/remotion/src/manifest.ts */
+const TRANSITION_TYPES: readonly string[] = [
+  "fade",
+  "slide-left",
+  "slide-right",
+  "slide-up",
+  "slide-down",
+  "wipe-left",
+  "wipe-right",
+  "zoom-in",
+  "zoom-out",
+  "blur",
+  "none",
+];
+/** Song sinh của LAYER_ANIMS trong engines/remotion/src/manifest.ts */
+const LAYER_ANIMS = ["none", "fade", "slide-up", "slide-down", "slide-left", "slide-right", "pop", "zoom"] as const;
+const LAYER_KINDS = ["image", "video", "text", "shape"] as const;
+const KEYFRAME_EASES = ["linear", "in", "out", "inOut"] as const;
+/** Song sinh của SPEED_MIN/SPEED_MAX trong engines/remotion/src/duration.ts */
+const SPEED_MIN = 0.25;
+const SPEED_MAX = 4;
+
+function validateFrameTransform(v: unknown, p: string, is: Issues): void {
+  if (!isObj(v)) {
+    is.add(p, "phải là object { x?, y?, scale?, rotate?, flipH?, flipV? }");
+    return;
+  }
+  is.optNum(v, "x", p, -1, 1);
+  is.optNum(v, "y", p, -1, 1);
+  is.optNum(v, "scale", p, 0.1, 5);
+  is.optNum(v, "rotate", p, -180, 180);
+  is.optBool(v, "flipH", p);
+  is.optBool(v, "flipV", p);
+}
+
+/** Song sinh của cueTransformSchema (CUE_SCALE_MIN/MAX) trong engines/remotion/src/manifest.ts */
+function validateCueTransform(v: unknown, p: string, is: Issues): void {
+  if (!isObj(v)) {
+    is.add(p, "phải là object { x?, y?, scale? }");
+    return;
+  }
+  is.optNum(v, "x", p, -1, 1);
+  is.optNum(v, "y", p, -1, 1);
+  is.optNum(v, "scale", p, 0.3, 3);
+}
+
+function validateCrop(v: unknown, p: string, is: Issues): void {
+  if (!isObj(v)) {
+    is.add(p, "phải là object { top?, right?, bottom?, left? }");
+    return;
+  }
+  for (const k of ["top", "right", "bottom", "left"]) is.optNum(v, k, p, 0, 0.45);
+}
+
+function validateColorAdjust(v: unknown, p: string, is: Issues): void {
+  if (!isObj(v)) {
+    is.add(p, "phải là object ColorAdjust");
+    return;
+  }
+  if (v.preset !== undefined) {
+    if (typeof v.preset !== "string") is.add(`${p}.preset`, "phải là chuỗi");
+    else if (!GRADE_PRESETS.some((g) => g.id === v.preset)) {
+      is.add(`${p}.preset`, `preset lạ - một trong: ${GRADE_PRESETS.map((g) => g.id).join(" | ")}`);
+    }
+  }
+  for (const k of ["brightness", "contrast", "saturation", "temperature", "tint"]) is.optNum(v, k, p, -1, 1);
+  is.optNum(v, "hue", p, -180, 180);
+  is.optNum(v, "vignette", p, 0, 1);
+  is.optNum(v, "blur", p, 0, 20);
+}
+
+function validateLayers(v: unknown, is: Issues): void {
+  if (!Array.isArray(v)) {
+    is.add("layers", "phải là mảng");
+    return;
+  }
+  const seen = new Map<string, number>();
+  v.forEach((l, i) => {
+    const p = `layers[${i}]`;
+    if (!isObj(l)) {
+      is.add(p, "layer phải là object");
+      return;
+    }
+    if (typeof l.id !== "string" || !l.id.trim()) {
+      is.add(`${p}.id`, "id phải là chuỗi không rỗng");
+    } else if (seen.has(l.id)) {
+      is.add(`${p}.id`, `id "${l.id}" trùng với layers[${seen.get(l.id)}]`);
+    } else {
+      seen.set(l.id, i);
+    }
+    if (!LAYER_KINDS.includes(l.kind as (typeof LAYER_KINDS)[number])) {
+      is.add(`${p}.kind`, `phải là một trong: ${LAYER_KINDS.join(" | ")}`);
+    }
+    is.cueBase(l, p);
+    const media = l.kind === "image" || l.kind === "video";
+    if (l.src !== undefined || media) {
+      if (!nonEmptyStr(l.src)) is.add(`${p}.src`, "layer ảnh/video cần src là chuỗi không rỗng");
+      else is.mediaPath(l.src, `${p}.src`);
+    }
+    is.optNum(l, "mediaStart", p, 0);
+    is.optBool(l, "muted", p);
+    is.optNum(l, "volume", p, 0, 2);
+    is.optStr(l, "text", p);
+    if (l.style !== undefined) {
+      const st = l.style;
+      const sp = `${p}.style`;
+      if (!isObj(st)) {
+        is.add(sp, "phải là object");
+      } else {
+        for (const k of ["fontFamily", "color", "backgroundColor", "strokeColor"]) is.optStr(st, k, sp);
+        is.optNum(st, "fontSizePx", sp, 0, 1000, true);
+        is.optNum(st, "fontWeight", sp, 100, 1000);
+        is.optEnum(st, "align", sp, ["left", "center", "right"]);
+        is.optNum(st, "lineHeight", sp, 0.5, 5);
+        is.optNum(st, "paddingPx", sp, 0, 1000);
+        is.optNum(st, "radiusPx", sp, 0, 5000);
+        is.optNum(st, "strokeWidthPx", sp, 0, 100);
+        is.optBool(st, "shadow", sp);
+      }
+    }
+    is.optNum(l, "width", p, 0.05, 2);
+    is.optNum(l, "aspect", p, 0.05, 20);
+    if (l.transform !== undefined) validateFrameTransform(l.transform, `${p}.transform`, is);
+    is.optNum(l, "opacity", p, 0, 1);
+    is.optEnum(l, "fit", p, FIT_VALUES);
+    if (l.crop !== undefined) validateCrop(l.crop, `${p}.crop`, is);
+    if (l.color !== undefined) validateColorAdjust(l.color, `${p}.color`, is);
+    is.optNum(l, "radiusPx", p, 0, 5000);
+    if (l.animation !== undefined) {
+      const ap = `${p}.animation`;
+      if (!isObj(l.animation)) {
+        is.add(ap, "phải là object { in?, out?, durationSec? }");
+      } else {
+        is.optEnum(l.animation, "in", ap, LAYER_ANIMS);
+        is.optEnum(l.animation, "out", ap, LAYER_ANIMS);
+        is.optNum(l.animation, "durationSec", ap, 0, 10);
+      }
+    }
+    if (l.keyframes !== undefined) {
+      if (!Array.isArray(l.keyframes)) {
+        is.add(`${p}.keyframes`, "phải là mảng");
+      } else {
+        l.keyframes.forEach((k, j) => {
+          const kp = `${p}.keyframes[${j}]`;
+          if (!isObj(k)) {
+            is.add(kp, "keyframe phải là object");
+            return;
+          }
+          is.int(k.frame, `${kp}.frame`, 0);
+          is.optNum(k, "x", kp, -1, 1);
+          is.optNum(k, "y", kp, -1, 1);
+          is.optNum(k, "scale", kp, 0.1, 5);
+          is.optNum(k, "rotate", kp, -180, 180);
+          is.optNum(k, "opacity", kp, 0, 1);
+          is.optEnum(k, "ease", kp, KEYFRAME_EASES);
+        });
+      }
     }
   });
 }
@@ -317,6 +516,8 @@ function validateAudio(v: unknown, is: Issues): void {
         is.int(x.atFrame, `${p}.atFrame`, 0);
         is.optNum(x, "volume", p, 0, 1);
         is.optNum(x, "mediaStart", p, 0);
+        is.optNum(x, "fadeInSec", p, 0, 10);
+        is.optNum(x, "fadeOutSec", p, 0, 10);
       });
     }
   }
@@ -330,6 +531,8 @@ function validateAudio(v: unknown, is: Issues): void {
     else is.mediaPath(m.file, "audio.music.file");
     is.optNum(m, "volume", "audio.music", 0, 1);
     is.optNum(m, "duckVolume", "audio.music", 0, 1);
+    is.optNum(m, "fadeInSec", "audio.music", 0, 10);
+    is.optNum(m, "fadeOutSec", "audio.music", 0, 10);
     if (m.speech !== undefined) {
       if (!Array.isArray(m.speech)) {
         is.add("audio.music.speech", "phải là mảng các cặp [giâyBắtĐầu, giâyKếtThúc]");
@@ -356,6 +559,7 @@ function validateCaptions(v: unknown, is: Issues): void {
       return;
     }
     is.cueBase(c, p);
+    if (c.transform !== undefined) validateCueTransform(c.transform, `${p}.transform`, is);
     if (!Array.isArray(c.words) || c.words.length < 1) {
       is.add(`${p}.words`, "phải là mảng có ít nhất 1 từ");
       return;
@@ -386,6 +590,7 @@ function validateSubtitles(v: unknown, is: Issues): void {
       return;
     }
     is.cueBase(c, p);
+    if (c.transform !== undefined) validateCueTransform(c.transform, `${p}.transform`, is);
     if (!nonEmptyStr(c.text)) is.add(`${p}.text`, "text phải là chuỗi không rỗng");
   });
 }
@@ -417,6 +622,7 @@ function validateOverlays(v: unknown, is: Issues): void {
       return;
     }
     is.cueBase(c, p);
+    if (c.transform !== undefined) validateCueTransform(c.transform, `${p}.transform`, is);
     is.optStr(c, "kicker", p);
     is.optEnum(c, "tier", p, ["main", "sub"]);
     is.optEnum(c, "accent", p, ["hot", "cool"]);
@@ -462,6 +668,7 @@ export function validateTimelinePatch(patch: Obj, projectDir: string): TimelineI
     validateSubtitleStyle(patch.subtitleStyle, is);
   }
   if ("overlays" in patch) validateOverlays(patch.overlays, is);
+  if ("layers" in patch && patch.layers !== null) validateLayers(patch.layers, is);
   return is.list;
 }
 
@@ -474,7 +681,7 @@ export function validateTimelinePatch(patch: Obj, projectDir: string): TimelineI
  * cũng phải hiểu y hệt - không thì xem trước chạy mà bấm render thì chết.
  * (`audio.music: null` và `audio.voice: null` thì zod nhận sẵn - giữ nguyên.)
  */
-const NULL_AS_ABSENT_KEYS = ["audio", "captions", "subtitles", "subtitleStyle", "overlays"] as const;
+const NULL_AS_ABSENT_KEYS = ["audio", "captions", "subtitles", "subtitleStyle", "overlays", "layers"] as const;
 
 /**
  * Xóa các khóa `null` ở trên (và `audio.sfx: null`) - SỬA TẠI CHỖ object truyền
@@ -516,6 +723,7 @@ export function validateTimelineForRender(meta: ProjectMeta, projectDir: string)
   if (raw.subtitles !== null) validateSubtitles(raw.subtitles, is);
   if (raw.subtitleStyle !== null) validateSubtitleStyle(raw.subtitleStyle, is);
   if (raw.overlays !== null) validateOverlays(raw.overlays, is);
+  if (raw.layers !== null) validateLayers(raw.layers, is);
   return is.list;
 }
 
@@ -853,7 +1061,7 @@ export async function probeMediaInfo(abs: string): Promise<MediaInfo | null> {
   try {
     const { code, stdout } = await execFileCaptureAll(
       "ffprobe",
-      [
+      ffprobeSafeArgs([
         "-v",
         "error",
         "-show_entries",
@@ -861,7 +1069,7 @@ export async function probeMediaInfo(abs: string): Promise<MediaInfo | null> {
         "-of",
         "json",
         abs,
-      ],
+      ]),
       { timeoutMs: 20_000 },
     );
     if (code === 0) info = parseProbe(JSON.parse(stdout) as ProbeJson, abs);
@@ -1060,10 +1268,40 @@ export function referencedMediaPaths(
   push(audio.voice);
   if (Array.isArray(audio.sfx)) for (const x of audio.sfx) if (isObj(x)) push(x.file);
   if (isObj(audio.music)) push(audio.music.file);
+  // Layer ảnh/video (EDITOR-V2) - đo được tỉ lệ khung (preview.media) + có ?v= như mọi file khác
+  for (const l of Array.isArray(meta.layers) ? meta.layers : []) if (isObj(l)) push(l.src);
   return out;
 }
 
 // ------------------------------------------------------------------ Bố cục scene (khớp engine)
+
+/**
+ * Tốc độ phát hiệu dụng của scene footage - SONG SINH của `sceneSpeedOf` trong
+ * engines/remotion/src/duration.ts (server không import được file ngoài src/).
+ */
+export function sceneSpeedOf(scene: Obj): number {
+  const v = scene.speed;
+  return isNum(v) && v >= SPEED_MIN && v <= SPEED_MAX ? v : 1;
+}
+
+/**
+ * Độ dài frame của một scene như engine tính - SONG SINH của
+ * `rawSceneDurationFrames` + `footageDurationFrames` trong
+ * engines/remotion/src/duration.ts (test ở duration.test.ts bên đó). Sửa một
+ * bên là PHẢI sửa bên kia: lệch một frame là bản render, bản xem trước và XML
+ * trượt khỏi nhau. Dùng chung cho layoutScenes và jobs/assemble.ts.
+ *
+ * Làm tròn TỪNG ĐẦU from/to rồi mới chia `speed` (speed = 1 → công thức cũ).
+ * null = chưa suy ra được.
+ */
+export function sceneDurationFrames(scene: Obj, fps: number): number | null {
+  if (isNum(scene.durationInFrames)) return scene.durationInFrames;
+  if (nonEmptyStr(scene.srcVideo) && isNum(scene.from) && isNum(scene.to)) {
+    const sourceFrames = Math.round(scene.to * fps) - Math.round(scene.from * fps);
+    return Math.max(1, Math.round(sourceFrames / sceneSpeedOf(scene)));
+  }
+  return null;
+}
 
 export interface SceneSlot {
   scene: Obj;
@@ -1082,10 +1320,7 @@ export interface SceneSlot {
 export function layoutScenes(scenes: Obj[], fps: number): { slots: SceneSlot[]; total: number } {
   const durOf = (s: Obj): number | null => {
     if (isInt(s.durationInFrames) && s.durationInFrames > 0) return s.durationInFrames;
-    if (nonEmptyStr(s.srcVideo) && isNum(s.from) && isNum(s.to)) {
-      return Math.max(1, Math.round(s.to * fps) - Math.round(s.from * fps));
-    }
-    return null;
+    return sceneDurationFrames(s, fps);
   };
   const slots: SceneSlot[] = [];
   let from = 0;
@@ -1203,6 +1438,8 @@ export function buildFcp7Xml(input: Fcp7Input): string {
     inF: number;
     kind: "video" | "audio";
     level?: number;
+    /** Tốc độ phát footage (`sceneSpeedOf`) - vắng = 1 */
+    speed?: number;
   }
   /** null khi clip rỗng hoặc file vượt rào (không bao giờ ghi đường dẫn ngoài project) */
   const clip = (o: ClipSpec): ClipSpec | null => {
@@ -1221,9 +1458,25 @@ export function buildFcp7Xml(input: Fcp7Input): string {
     if (!file) return "";
     clipSeq++;
     const info = media[o.rel] ?? { durationSec: null };
-    const fileFrames = info.durationSec
-      ? Math.max(1, Math.ceil(info.durationSec * fps))
-      : o.inF + (o.end - o.start);
+    // Tua nhanh/chậm: clip chiếm (end-start) frame timeline nhưng phát
+    // (end-start) × speed frame NGUỒN - out phải là điểm ra thật trong file,
+    // kèm hiệu ứng Time Remap để NLE phát đúng tốc độ như bản render
+    const speed = o.speed !== undefined && o.speed !== 1 ? o.speed : 1;
+    const outF = o.inF + (speed === 1 ? o.end - o.start : Math.max(1, Math.round((o.end - o.start) * speed)));
+    const fileFrames = info.durationSec ? Math.max(1, Math.ceil(info.durationSec * fps)) : outF;
+    const remapXml =
+      speed !== 1
+        ? "<filter><effect><name>Time Remap</name><effectid>timeremap</effectid>" +
+          "<effectcategory>motion</effectcategory><effecttype>motion</effecttype>" +
+          `<mediatype>${o.kind}</mediatype>` +
+          "<parameter><parameterid>variablespeed</parameterid><name>variablespeed</name>" +
+          "<valuemin>0</valuemin><valuemax>1</valuemax><value>0</value></parameter>" +
+          "<parameter><parameterid>speed</parameterid><name>speed</name>" +
+          `<valuemin>-100000</valuemin><valuemax>100000</valuemax><value>${Math.round(speed * 10000) / 100}</value></parameter>` +
+          "<parameter><parameterid>reverse</parameterid><name>reverse</name><value>FALSE</value></parameter>" +
+          "<parameter><parameterid>frameblending</parameterid><name>frameblending</name><value>FALSE</value></parameter>" +
+          "</effect></filter>"
+        : "";
     const levelXml =
       o.level !== undefined
         ? "<filter><effect><name>Audio Levels</name><effectid>audiolevels</effectid>" +
@@ -1239,7 +1492,7 @@ export function buildFcp7Xml(input: Fcp7Input): string {
     return (
       `<clipitem id="clipitem-${clipSeq}"><name>${escapeXml(o.name)}</name><enabled>TRUE</enabled>` +
       `<duration>${fileFrames}</duration>${rateXml}<start>${o.start}</start><end>${o.end}</end>` +
-      `<in>${o.inF}</in><out>${o.inF + (o.end - o.start)}</out>${file}${sourceTrack}${levelXml}</clipitem>`
+      `<in>${o.inF}</in><out>${outF}</out>${file}${sourceTrack}${remapXml}${levelXml}</clipitem>`
     );
   };
   const keep = (c: ClipSpec | null): c is ClipSpec => c !== null;
@@ -1258,7 +1511,8 @@ export function buildFcp7Xml(input: Fcp7Input): string {
       if (rel) v = clip({ name, rel, start: slot.start, end, inF: 0, kind: "video" });
     } else if (nonEmptyStr(s.srcVideo)) {
       const inF = isNum(s.from) ? Math.round(s.from * fps) : 0;
-      v = clip({ name, rel: s.srcVideo, start: slot.start, end, inF, kind: "video" });
+      const speed = sceneSpeedOf(s);
+      v = clip({ name, rel: s.srcVideo, start: slot.start, end, inF, kind: "video", ...(speed !== 1 ? { speed } : {}) });
       if (v && s.muted !== true && media[s.srcVideo]?.hasAudio) {
         footageAudio.push({ ...v, kind: "audio" });
       }

@@ -1,7 +1,9 @@
 "use client";
 
 /**
- * Trang Kết nối - quản lý API key của các AI provider (Claude, Gemini).
+ * Trang Kết nối - quản lý API key của các AI provider (Claude, Gemini), gateway
+ * tạo ảnh bằng tài khoản web (ChatGPT, Gemini cookie - GatewayCards.tsx) và
+ * nhà cung cấp tạo ảnh mặc định.
  * Key lưu qua PUT /api/connections/:provider/key, hiệu lực ngay không cần
  * restart. Sau khi đổi key gọi refreshProviders() để các select model/provider
  * nơi khác (ModelPicker) fetch lại danh sách mới.
@@ -69,17 +71,17 @@ import { Panel } from "@/components/Panel";
 import { Skeleton } from "@/components/Skeleton";
 import { refreshProviders } from "@/components/ModelPicker";
 import { useT } from "@/lib/i18n";
-
-/**
- * Đẩy một lỗi lên banner cấp trang. `key` là nguồn lỗi (mỗi card một khóa
- * riêng) để lỗi của card này không xóa mất lỗi của card kia - TunnelCard poll
- * lại mỗi 4s, nếu dùng chung một ô lỗi thì nó chùi sạch lỗi lưu key vừa hiện.
- * Truyền `null` = nguồn đó hết lỗi.
- */
-type ErrorReporter = (
-  key: string,
-  err: { message: string; detail?: string } | null
-) => void;
+import {
+  ChatgptGatewayCard,
+  GeminiWebCard,
+  ImageProviderCard,
+} from "./GatewayCards";
+import {
+  CardIcon,
+  Row,
+  SavedNotice,
+  type ErrorReporter,
+} from "./shared";
 
 /** Nhãn tiếng Việt cho role provider - khớp ProviderRole của server. */
 // Giá trị là KEY dictionary - dịch bằng t() lúc render.
@@ -100,30 +102,6 @@ const KEY_PLACEHOLDERS: Record<ConnectionInfo["id"], string> = {
   gemini: "AIza...",
   openai: "sk-...",
 };
-
-/** Một hàng thiết lập - cùng nhịp dọc với trang Cấu hình. */
-function Row({ children }: { children: React.ReactNode }) {
-  return <div className="py-4 first:pt-0 last:pb-0">{children}</div>;
-}
-
-/** Icon vuông đứng trước tên card - dùng chung cho provider và tunnel. */
-function CardIcon({ icon: Icon }: { icon: LucideIcon }) {
-  return (
-    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius)] bg-[var(--bg-subtle)]">
-      <Icon size={16} strokeWidth={1.75} className="text-[var(--primary)]" />
-    </span>
-  );
-}
-
-/** Dòng xác nhận ngắn (đã lưu / đã áp dụng) - cùng hình dạng với trang Cấu hình. */
-function SavedNotice({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-2 text-meta font-medium text-[var(--success)]">
-      <Check size={13} strokeWidth={2} className="shrink-0" />
-      {children}
-    </span>
-  );
-}
 
 function StatusBadge({ conn }: { conn: ConnectionInfo }) {
   const { t } = useT();
@@ -765,6 +743,22 @@ export default function ConnectionsPage() {
     load();
   }, [load]);
 
+  /**
+   * Tín hiệu "tải lại trạng thái tạo ảnh": tăng mỗi khi một thao tác có thể đổi
+   * provider nào đã cấu hình (đổi key Gemini API, thêm/xóa tài khoản ChatGPT,
+   * lưu/xóa cookie Gemini, cài gateway) - card gateway và card "Tạo ảnh mặc
+   * định" cùng đọc lại, không card nào tự suy diễn trạng thái của card kia.
+   */
+  const [imageSignal, setImageSignal] = useState(0);
+  const bumpImage = useCallback(() => setImageSignal((n) => n + 1), []);
+  const onConnectionsUpdate = useCallback(
+    (list: ConnectionInfo[]) => {
+      setConnections(list);
+      bumpImage();
+    },
+    [bumpImage]
+  );
+
   return (
     <div className="flex w-full flex-col gap-4">
       <PageHeader
@@ -796,10 +790,21 @@ export default function ConnectionsPage() {
               <ProviderCard
                 key={c.id}
                 conn={c}
-                onUpdate={setConnections}
+                onUpdate={onConnectionsUpdate}
                 onError={report}
               />
             ))}
+        <ChatgptGatewayCard
+          onError={report}
+          onChanged={bumpImage}
+          reloadSignal={imageSignal}
+        />
+        <GeminiWebCard
+          onError={report}
+          onChanged={bumpImage}
+          reloadSignal={imageSignal}
+        />
+        <ImageProviderCard onError={report} reloadSignal={imageSignal} />
         <TunnelCard onError={report} />
       </div>
 

@@ -46,6 +46,14 @@ The first synthesis after a server start downloads ~1 GB of model from HuggingFa
 
 ## Known issues
 
+**Symptom:** every transcription (video projects, Text to video, narration) fails with `TypeError: open() got an unexpected keyword argument 'metadata_errors'` from `faster_whisper/audio.py`.
+**Cause:** PyAV 17+ dropped `metadata_errors`, but faster-whisper 1.2.x still passes it to `av.open()` (verified 2026-10: `av` 19.0.1 + `faster-whisper` 1.2.1). An unpinned `pip install faster-whisper` pulls the newest `av`.
+**Fix:** `.runtime/venv/Scripts/python.exe -m pip install "av>=11,<17"` (16.1.0 verified). `start/doctor.mjs` now pins it in the faster-whisper fix, but a venv that already has av 19 must be downgraded by hand - the doctor's probe only checks `import faster_whisper`, which still succeeds.
+
+**Symptom:** every VieNeu call (narration, Text to video, voice preview) returns `503 LOAD_FAILED` for the rest of the server's life, yet the same Python loads `Vieneu()` and synthesizes fine from the command line.
+**Cause:** one failed model load (seen once as `External data path escapes model directory` while the ~1GB model was still being fetched on first use) set `loadFailure` in `ttsLocal.ts`. That flag overrode every later probe, and the only way to clear it was `probeLocalEngine(true)` - which no route called. An agent mid-edit had no way out but asking the user to restart the backend.
+**Fix:** the flag now expires after 2 minutes (the next call retries the real load), and `GET /api/tts/engines?refresh=1` - the Voices page "Kiểm tra lại" button - clears it immediately. To check a machine by hand, run the worker with the server's env (`HF_HOME` and `HUGGINGFACE_HUB_CACHE` both = `.runtime/models`) and send `{"id":1,"cmd":"synth","text":"Xin chào","voice":"Mai Anh","out":"<abs path>.wav"}` on stdin.
+
 **Symptom:** Cloning fails with `ImportError: TorchCodec is required for load_with_torchcodec`, or `RuntimeError: Could not load libtorchcodec`.
 **Cause:** `add_voice()` reads the reference through `torchaudio.load()`. From torchaudio 2.9 every backend routes through `torchcodec`, which needs FFmpeg **shared libraries** - the usual Windows FFmpeg builds are static, so it can never load. Installing `torchcodec` does not fix it. Passing `backend="soundfile"` does not fix it either (verified: all three backends raise the same error).
 **Fix:** monkeypatch `torchaudio.load` to use `soundfile` **before importing vieneu**. `soundfile` is already a vieneu dependency, so this adds nothing to install. Guard it in try/except so that a machine without torch still gets preset voices.

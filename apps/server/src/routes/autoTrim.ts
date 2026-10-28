@@ -132,7 +132,7 @@ router.post("/:id/auto-trim/apply", (req, res) => {
   // Cắt là ghi đè asset của project - không được chạy chồng lên job khác của
   // chính project đó (queue cũng chặn theo busyKey, nhưng chặn sớm ở API thì
   // người gọi biết ngay thay vì thấy job nằm chờ mãi).
-  if (db.hasActiveJobForProject(id)) {
+  if (db.hasActiveJobForProject(id, "video")) {
     throw new HttpError(409, "BUSY", `Project "${id}" đang có job chạy/chờ trong hàng đợi`);
   }
 

@@ -2,11 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { hasClaudeAuth, paths, repoRoot } from "./config.js";
+import { agentEnv, checkAgentToolUse } from "./agentPolicy.js";
 import * as db from "./db.js";
 import { broadcast } from "./events.js";
 import { normOutput, readMeta } from "./meta.js";
+import { isQcReportStale, readQcReport } from "./qc.js";
 import { readRenderSettings } from "./renderSettings.js";
-import { agentRunStarted, agentRunFinished } from "./timeline.js";
+import { agentRunStarted, agentRunFinished, timelineVersion } from "./timeline.js";
 
 /**
  * Chạy Claude Code headless qua Claude Agent SDK (0.3.x).
@@ -161,9 +163,83 @@ const RESUME_DELAY_MS = 10_000;
  * video nên không mở ra làm gì.
  */
 function maxResumeAttemptsFor(session: Pick<db.ChatSessionRow, "goal">): number {
-  return session.goal === "final"
+  return isBuildGoal(session.goal)
     ? readRenderSettings().aiMaxAttempts
     : MAX_RESUME_ATTEMPTS;
+}
+
+/**
+ * Phiên DỰNG VIDEO (gate + cap Cấu hình): goal 'final' (làm trọn tới final) hoặc
+ * 'draft' (brief.finishMode = "draft" - dừng ở bản draft đã QC, docs/EDITOR-V2-PLAN.md
+ * mục 3). Hai loại cùng chạy pipeline dài, chỉ khác điểm dừng.
+ */
+function isBuildGoal(goal: string | null | undefined): boolean {
+  return goal === "final" || goal === "draft";
+}
+
+/**
+ * Version timeline lúc CHUỖI lượt chạy hiện tại bắt đầu (message mới của user -
+ * KHÔNG ghi đè ở lượt auto-resume). Gate 'draft' dùng để nhận ra chuỗi lượt chỉ
+ * hỏi đáp, không đổi timeline. Chỉ nằm trong RAM: server restart thì mất, gate
+ * quay về luật chặt (bắt buộc draft mới trong lượt) - an toàn hơn là thả nhầm.
+ */
+const chainStartVersion = new Map<string, { version: string | null; source: string | null }>();
+
+/** Thư mục/file nguồn của project mà agent hay sửa NGOÀI meta.json */
+const SOURCE_ENTRIES = ["index.html", "hyperframes.json", "compositions", "assets", "renders"];
+/**
+ * Trong renders/ chỉ tính bản render VIDEO của scene: ảnh soi frame / ảnh QC
+ * safe-area (renders/qc-safe-area-*.png) sinh ra cả ở lượt chỉ kiểm tra, không
+ * phải là sửa nội dung.
+ */
+const RENDER_VIDEO_RE = /\.(mp4|mov|webm|mkv)$/i;
+/** Trần số file quét mỗi lần (assets có thể nhiều) - quá thì dừng, dấu vẫn ổn định giữa hai lần gọi */
+const SOURCE_SCAN_LIMIT = 5000;
+
+/**
+ * Dấu vân tay nguồn dựng của project: số file + tổng size + mtime mới nhất của
+ * index.html, compositions/, assets/, renders/… timelineVersion chỉ băm các khóa
+ * timeline trong meta.json, nên sửa scene HyperFrames (compositions/*.html - kiểu
+ * sửa AI làm nhiều nhất) không đổi version - gate 'draft' phải nhìn cả cái này
+ * mới biết chuỗi lượt "không đổi gì". null = không đọc được (coi như ĐÃ đổi).
+ */
+function projectSourceMark(projectId: string): string | null {
+  const root = path.join(paths.videoProjectsDir, projectId);
+  let count = 0;
+  let size = 0;
+  let maxMtime = 0;
+  const visit = (abs: string, rendersOnly: boolean): void => {
+    if (count >= SOURCE_SCAN_LIMIT) return;
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(abs);
+    } catch {
+      return;
+    }
+    if (st.isDirectory()) {
+      // xóa/đổi tên file đổi mtime thư mục (renders/ thì không: ảnh soi frame cũng đổi nó)
+      if (!rendersOnly && st.mtimeMs > maxMtime) maxMtime = st.mtimeMs;
+      let names: string[];
+      try {
+        names = fs.readdirSync(abs).sort();
+      } catch {
+        return;
+      }
+      for (const name of names) visit(path.join(abs, name), rendersOnly);
+      return;
+    }
+    if (!st.isFile() || (rendersOnly && !RENDER_VIDEO_RE.test(abs))) return;
+    count += 1;
+    size += st.size;
+    if (st.mtimeMs > maxMtime) maxMtime = st.mtimeMs;
+  };
+  try {
+    if (!fs.statSync(root).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  for (const entry of SOURCE_ENTRIES) visit(path.join(root, entry), entry === "renders");
+  return `${count}:${size}:${Math.round(maxMtime)}`;
 }
 
 /**
@@ -258,6 +334,87 @@ function finalGateResumeMessage(sessionId: string): string | null {
   );
 }
 
+/** So hai mốc ISO (SQLite lưu nowIso()) - a hỏng coi như KHÔNG mới hơn, b hỏng coi như không chặn */
+function isoAtOrAfter(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ta = a ? Date.parse(a) : NaN;
+  const tb = b ? Date.parse(b) : NaN;
+  if (!Number.isFinite(ta)) return false;
+  if (!Number.isFinite(tb)) return true;
+  return ta >= tb;
+}
+
+/**
+ * Gate hoàn thành phiên edit goal='draft' (brief.finishMode = "draft"): xong khi
+ * có job `assemble-draft` THÀNH CÔNG kết thúc sau lúc lượt chạy hiện tại bắt đầu
+ * VÀ QC đã chạy cho đúng file draft đó (qc.json đo sau khi job xong, chưa stale).
+ * QC fail vẫn tính là "đã QC" - prompt bảo agent sửa, còn cổng QC của job
+ * assemble-final là chốt chặn thật trước khi xuất.
+ *
+ * Ngoại lệ: chuỗi lượt này KHÔNG đổi timeline LẪN nguồn dựng (compositions/,
+ * assets/, renders/ - projectSourceMark; user chỉ hỏi đáp) và đã có draft
+ * đã QC kể từ lúc tạo phiên → coi là xong, khỏi ép render lại bản y hệt.
+ * Trả về message resume nếu CHƯA đạt; null = đạt hoặc không áp dụng.
+ */
+function draftGateResumeMessage(sessionId: string): string | null {
+  const session = db.getChatSession(sessionId);
+  if (!session || session.goal !== "draft" || !session.projectId) return null;
+  const projectId = session.projectId;
+  let unchanged = false;
+  try {
+    const meta = readMeta(projectId);
+    const start = chainStartVersion.get(sessionId);
+    // "Không đổi" = CẢ timeline LẪN nguồn dựng (compositions/assets/renders) y nguyên
+    const source = start?.source != null ? projectSourceMark(projectId) : null;
+    unchanged =
+      typeof start?.version === "string" &&
+      timelineVersion(meta) === start.version &&
+      source !== null &&
+      source === start.source;
+  } catch {
+    // Project đã bị xóa / meta.json hỏng - không gate được, coi như xong để không kẹt phiên
+    return null;
+  }
+  const since = unchanged ? session.createdAt : (session.runStartedAt ?? session.createdAt);
+
+  // Job draft thành công MỚI NHẤT (listJobs đã sắp createdAt DESC)
+  const draftJob = db
+    .listJobs(500, projectId)
+    .find((j) => j.type === "assemble-draft" && j.status === "done");
+  const hasFreshDraft = Boolean(
+    draftJob && draftJob.outputPath && isoAtOrAfter(draftJob.finishedAt, since),
+  );
+  let qcOk = false;
+  if (hasFreshDraft && draftJob?.outputPath) {
+    const report = readQcReport(projectId);
+    qcOk = Boolean(
+      report &&
+        path.resolve(repoRoot, report.file) === path.resolve(repoRoot, draftJob.outputPath) &&
+        isoAtOrAfter(report.checkedAt, draftJob.finishedAt) &&
+        !isQcReportStale(report),
+    );
+  }
+  if (hasFreshDraft && qcOk) return null;
+
+  if (!hasFreshDraft) {
+    return (
+      `Bản draft CHƯA có (outputs/${projectId}-draft.mp4 từ job assemble-draft của lượt này). ` +
+      "Chế độ của project là DỪNG Ở DRAFT: nhiệm vụ chỉ hoàn thành khi job assemble-draft chạy xong " +
+      `và đã QC bản draft đó (POST http://localhost:6869/api/projects/${projectId}/qc). ` +
+      "Kiểm tra trạng thái hiện tại rồi làm tiếp: dựng/sửa phần còn thiếu, xếp draft qua " +
+      `POST http://localhost:6869/api/projects/${projectId}/editor/render body {"quality":"draft"}, ` +
+      "đợi job xong, verify frame, QC. KHÔNG render final. " +
+      "Nếu job render failed - đọc log job tìm nguyên nhân, sửa rồi chạy lại, KHÔNG bỏ qua. " +
+      "Nếu render đang chạy dở - CHỜ nó chạy xong rồi verify tiếp, KHÔNG chạy lại từ đầu."
+    );
+  }
+  return (
+    "Bản draft đã render nhưng CHƯA QC (hoặc QC cũ hơn bản draft). Gọi " +
+    `POST http://localhost:6869/api/projects/${projectId}/qc (body {}), đọc report: check fail thì sửa ` +
+    "đúng nguyên nhân, render draft lại rồi QC lại; soi ảnh safe-area. Xong thì báo cáo kết quả QC. " +
+    "KHÔNG render final."
+  );
+}
+
 /**
  * Chạy agent async cho một message - caller (route POST /api/chat) đã trả 202 trước đó.
  * Không bao giờ throw; mọi lỗi đẩy qua SSE kind "error".
@@ -324,9 +481,43 @@ export async function runAgent(
     // - 100 turn không đủ, lượt kết thúc với subtype != success giữa chừng
     // Trần lượt của phiên dựng video lấy từ Cấu hình (đọc mỗi lần chạy nên đổi
     // là ăn ngay). Phiên chat thường giữ 100 - nó ngắn, không phải chỗ tốn tiền.
-    maxTurns: session?.goal === "final" ? readRenderSettings().aiMaxTurns : 100,
+    // goal='draft' cùng pipeline (chỉ dừng sớm hơn) nên cùng trần.
+    maxTurns: isBuildGoal(session?.goal) ? readRenderSettings().aiMaxTurns : 100,
     settingSources: ["project", "user"],
     systemPrompt: { type: "preset", preset: "claude_code" },
+    // Không có kênh ra mạng nào ngoài API cục bộ - xem ALLOWED_TOOLS
+    disallowedTools: ["WebFetch", "WebSearch"],
+    // Gỡ khóa bí mật (Gemini, AIEV_API_TOKEN...) khỏi môi trường agent: `env`,
+    // `printenv`, `node -e process.env` trong Bash không còn gì để rò
+    env: agentEnv(),
+    // "Bash" trần trong allowedTools nghĩa là allowlist settings.json không giới
+    // hạn được lệnh nào - lớp chặn thật nằm ở agentPolicy.ts. Deny của hook thắng
+    // mọi luật allow; trả {} = không can thiệp, để luật quyền bình thường quyết.
+    hooks: {
+      PreToolUse: [
+        {
+          hooks: [
+            async (input: { hook_event_name?: string; tool_name?: string; tool_input?: unknown }) => {
+              if (input.hook_event_name !== "PreToolUse" || !input.tool_name) return {};
+              const toolInput =
+                input.tool_input && typeof input.tool_input === "object"
+                  ? (input.tool_input as Record<string, unknown>)
+                  : {};
+              const reason = checkAgentToolUse(input.tool_name, toolInput);
+              if (!reason) return {};
+              console.warn(`[agent-policy] chặn ${input.tool_name} (phiên ${sessionId}): ${reason}`);
+              return {
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse",
+                  permissionDecision: "deny",
+                  permissionDecisionReason: reason,
+                },
+              };
+            },
+          ],
+        },
+      ],
+    },
   };
   if (sdkSessionId) options.resume = sdkSessionId;
   // Model/effort người dùng đã chọn cho phiên (docs/API.md mục AI Providers) - chỉ set khi có
@@ -341,6 +532,10 @@ export async function runAgent(
     });
   } catch (err) {
     db.finishChatRun(sessionId);
+    // Lượt tự chạy lại của gate goal='final'/'draft' tới đây khi status đang là
+    // "running" (giữ trong lúc chờ) - không hạ xuống thì phiên kẹt "running" mãi
+    // (không còn query lẫn timer nào, interrupt cũng không gỡ được)
+    db.setChatSessionStatus(sessionId, "error");
     emit({
       sessionId,
       kind: "error",
@@ -365,6 +560,13 @@ export async function runAgent(
   const versionAtStart = snapshotProjectId
     ? agentRunStarted(snapshotProjectId, snapshotLabel)
     : null;
+  // Mốc đầu CHUỖI lượt (message mới của user) cho gate 'draft' - lượt auto-resume giữ mốc cũ
+  if (!opts.continueRun) {
+    chainStartVersion.set(sessionId, {
+      version: versionAtStart,
+      source: snapshotProjectId ? projectSourceMark(snapshotProjectId) : null,
+    });
+  }
   let textBuffer = "";
   let resultSaved = false;
   let hadError = false;
@@ -468,7 +670,12 @@ export async function runAgent(
     // Gate phiên edit (goal='final'): agent báo "done" nhưng video final CHƯA tồn tại → CHƯA xong.
     // Dùng đúng hạ tầng auto-resume: chờ 10s rồi tự chạy tiếp (tôn trọng autoResume + interrupt
     // + giới hạn resumeAttempts). Trong lúc chờ GIỮ status "running" - đúng ngữ nghĩa "chưa xong".
-    const gateMessage = status === "done" ? finalGateResumeMessage(sessionId) : null;
+    // goal='draft' dùng cùng hạ tầng, khác điều kiện: draft đã QC thay vì final (mỗi hàm
+    // tự trả null khi goal không phải của nó)
+    const gateMessage =
+      status === "done"
+        ? (finalGateResumeMessage(sessionId) ?? draftGateResumeMessage(sessionId))
+        : null;
     if (gateMessage) {
       const s = db.getChatSession(sessionId);
       // Có tiến bộ từ lượt trước (job done tăng / renders đổi / output xuất hiện) → reset đếm
@@ -493,14 +700,22 @@ export async function runAgent(
       }
       // Hết lượt thử liên tiếp KHÔNG tiến bộ / autoResume tắt / mất auth - kết thúc với "error"
       status = "error";
+      const isDraftGoal = s?.goal === "draft";
       db.addChatMessage(
         sessionId,
         "assistant",
         "text",
-        `Đã dừng sau ${cap} lượt tự chạy liên tiếp mà KHÔNG có tiến bộ - video final vẫn chưa render xong. ` +
+        `Đã dừng sau ${cap} lượt tự chạy liên tiếp mà KHÔNG có tiến bộ - ` +
+          (isDraftGoal ? "bản draft đã QC vẫn chưa có. " : "video final vẫn chưa render xong. ") +
           'Xem log job/render tìm nguyên nhân rồi bấm gửi "tiếp tục" để chạy tiếp.',
       );
-      emit({ sessionId, kind: "error", error: "Video final chưa tồn tại - phiên edit chưa hoàn thành" });
+      emit({
+        sessionId,
+        kind: "error",
+        error: isDraftGoal
+          ? "Bản draft đã QC chưa có - phiên edit chưa hoàn thành"
+          : "Video final chưa tồn tại - phiên edit chưa hoàn thành",
+      });
     }
 
     db.setChatSessionStatus(sessionId, status);

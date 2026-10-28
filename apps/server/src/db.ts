@@ -261,7 +261,8 @@ export function appendJobLog(id: string, line: string): void {
 }
 
 export function listJobs(limit = 50, projectId?: string): JobRow[] {
-  const capped = Math.max(1, Math.min(500, limit));
+  // Làm tròn: ?limit=2.5 bind thành REAL và SQLite ném "datatype mismatch" ở LIMIT → 500
+  const capped = Math.max(1, Math.min(500, Math.floor(limit)));
   // Lọc theo project để web không phải kéo 50 job toàn cục rồi lọc client-side
   if (projectId) {
     return db
@@ -288,13 +289,35 @@ export function getRunningJobs(): JobRow[] {
     .all() as JobRow[];
 }
 
-/** Project đang có job running/queued? - chặn thao tác dọn file trung gian khi job cần chúng */
-export function hasActiveJobForProject(projectId: string): boolean {
+/**
+ * `projectId` của job trỏ vào đâu. Video project, image project và phiên auto-cut /
+ * text-to-video / dịch video đều SINH ID TỪ TÊN, mỗi loại một thư mục riêng - nên
+ * "demo" có thể vừa là video project vừa là phiên dịch. Cùng cách chia namespace
+ * với busyKeyOf trong queue.ts ("auto-trim" thuộc video project).
+ */
+export type JobOwner = "video" | "image" | "auto-cut" | "text-to-video" | "translate-video";
+
+const JOB_TYPES_OF_OWNER: Record<JobOwner, JobType[]> = {
+  video: ["scene-draft", "scene-final", "assemble-draft", "assemble-final", "auto-trim"],
+  image: ["image-gen"],
+  "auto-cut": ["auto-cut"],
+  "text-to-video": ["text-to-video"],
+  "translate-video": ["translate-video"],
+};
+
+/**
+ * Project/phiên đang có job running/queued? - chặn thao tác dọn file trung gian khi
+ * job cần chúng. `owner` BẮT BUỘC: chỉ so projectId thì phiên dịch "demo" báo 409
+ * BUSY mỗi lần video project "demo" render (và ngược lại).
+ */
+export function hasActiveJobForProject(projectId: string, owner: JobOwner): boolean {
+  const types = JOB_TYPES_OF_OWNER[owner];
   const row = db
     .prepare(
-      "SELECT 1 FROM jobs WHERE projectId = ? AND status IN ('running', 'queued') LIMIT 1",
+      "SELECT 1 FROM jobs WHERE projectId = ? AND status IN ('running', 'queued') " +
+        `AND type IN (${types.map(() => "?").join(", ")}) LIMIT 1`,
     )
-    .get(projectId);
+    .get(projectId, ...types);
   return row !== undefined;
 }
 
@@ -320,13 +343,24 @@ export function countQueuedJobs(): number {
   return row.n;
 }
 
-/** Đã có assemble-draft thành công cho project này chưa? (điều kiện chạy job final) */
-export function hasDoneAssembleDraft(projectId: string): boolean {
-  const row = db
-    .prepare(
-      "SELECT 1 FROM jobs WHERE projectId = ? AND type = 'assemble-draft' AND status = 'done' LIMIT 1",
-    )
-    .get(projectId);
+/**
+ * Đã có assemble-draft thành công cho project này chưa? (điều kiện chạy job final)
+ * `since` = meta.createdAt: dòng job sống lâu hơn project, mà id sinh từ tên nên xóa
+ * rồi tạo lại project là trùng id - không lọc thì draft của project ĐÃ XÓA mở cổng
+ * final cho project mới chưa từng dựng draft.
+ */
+export function hasDoneAssembleDraft(projectId: string, since?: string | null): boolean {
+  const row = since
+    ? db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE projectId = ? AND type = 'assemble-draft' AND status = 'done' AND createdAt >= ? LIMIT 1",
+        )
+        .get(projectId, since)
+    : db
+        .prepare(
+          "SELECT 1 FROM jobs WHERE projectId = ? AND type = 'assemble-draft' AND status = 'done' LIMIT 1",
+        )
+        .get(projectId);
   return row !== undefined;
 }
 
@@ -417,7 +451,10 @@ export interface UsageTimelinePoint {
 export type UsageScope = "all" | "video" | "image";
 
 /**
- * Token theo ngày (UTC, yyyy-mm-dd) trong `days` ngày gần nhất - cho biểu đồ Dashboard.
+ * Token theo ngày (giờ ĐỊA PHƯƠNG của máy chủ, yyyy-mm-dd) trong `days` ngày gần nhất -
+ * cho biểu đồ Dashboard. Không nhóm theo ngày UTC: biểu đồ dựng trục ngày theo giờ
+ * địa phương của trình duyệt (cùng máy), nhóm UTC thì ở UTC+7 mọi thứ dùng từ 0h-7h
+ * rơi vào cột hôm qua và cột hôm nay đứng 0 tới 7h sáng.
  * scope: phân loại projectId theo folder tồn tại trên đĩa (resolve mỗi request -
  * project bị xóa thì dòng token của nó rơi về nhóm "còn lại", chỉ tính vào "all").
  */
@@ -425,7 +462,7 @@ export function usageTimeline(days: number, scope: UsageScope = "all"): UsageTim
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const rows = db
     .prepare(
-      "SELECT substr(createdAt, 1, 10) AS date, COALESCE(provider, 'claude') AS provider, projectId, " +
+      "SELECT date(createdAt, 'localtime') AS date, COALESCE(provider, 'claude') AS provider, projectId, " +
         "SUM(inputTokens) AS tokensIn, SUM(outputTokens) AS tokensOut, " +
         "SUM(inputTokens + outputTokens) AS tokens, SUM(costUsd) AS costUsd " +
         "FROM token_usage WHERE createdAt >= ? GROUP BY date, provider, projectId ORDER BY date",

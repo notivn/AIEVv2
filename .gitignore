@@ -1,7 +1,26 @@
 node_modules/
 .env
+# Biến thể .env (.env.local, .env.production…) cũng chứa khóa thật - chỉ
+# .env.example (không có giá trị bí mật) được đi theo repo
+.env.*
+!.env.example
 .next/
 dist/
+
+# Lưới an toàn cho dữ liệu nhạy cảm ở bất kỳ đâu trong repo (DB thật nằm ở
+# apps/server/data/ đã ignore bên dưới, nhưng một script ghi nhầm chỗ thì vẫn
+# không lọt lên repo công khai): SQLite + WAL/journal, cấu hình Claude Code cục
+# bộ (permission riêng từng máy), file cookie trình duyệt, khóa riêng.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-*
+*.sqlite3
+.claude/settings.local.json
+cookies.txt
+*.cookies.json
+*.pem
+*.key
 
 # Project video/ảnh của người dùng — không đẩy lên repo
 video-projects/*
@@ -10,6 +29,9 @@ video-projects/*
 # riêng ra dù đã nằm trong video-projects/*: ai đó mở lại một project mẫu bằng
 # dấu "!" thì lịch sử vẫn không bị kéo theo lên repo.
 video-projects/*/.history/
+# Cùng lý do: bản render + props đã stage (chứa đường dẫn tuyệt đối của máy)
+video-projects/*/renders/
+video-projects/*/props.resolved.json
 image-projects/
 /auto-cut/
 # Dấu / đầu là BẮT BUỘC: không có nó thì mẫu này khớp luôn
@@ -99,3 +121,12 @@ start/update-target.txt
 # Trạng thái cục bộ của script khởi động: dấu vân tay mã nguồn của bản build
 # gần nhất (build.json) và của lần chạy hiện tại (run.json). Riêng từng máy.
 /.aiev/
+
+# Gateway tạo ảnh (gateways/, chạy bằng .runtime/venv-gateway): bytecode Python
+# sinh ra lúc chạy, và lưới an toàn cho dữ liệu tài khoản nếu gateway lỡ chạy
+# thiếu env CHATGPT2API_DATA_DIR (dữ liệu thật nằm ở .runtime/chatgpt-gateway/,
+# cookie Gemini ở apps/server/data/gemini-web.json - cả hai đã ignore ở trên).
+__pycache__/
+*.py[cod]
+/gateways/chatgpt/data/
+/gateways/chatgpt/config.json

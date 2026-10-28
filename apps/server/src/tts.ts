@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { paths } from "./config.js";
+import { ffmpegSafeArgs, ffprobeSafeArgs } from "./ffmpegSafe.js";
 import { geminiApiKey } from "./gemini.js";
 import {
   TTS_CHUNK_MAX_CHARS,
@@ -540,7 +541,7 @@ async function callTtsOnce(input: {
   let res: Response;
   try {
     res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${input.model}:generateContent`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
       {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": key },
@@ -842,7 +843,7 @@ async function runFfmpeg(
 ): Promise<void> {
   let r: Awaited<ReturnType<typeof execFileCaptureAll>>;
   try {
-    r = await execFileCaptureAll("ffmpeg", ["-hide_banner", "-nostats", "-y", ...args], {
+    r = await execFileCaptureAll("ffmpeg", ffmpegSafeArgs(["-hide_banner", "-nostats", "-y", ...args]), {
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs ?? 120_000,
       isCanceled: opts.isCanceled,
@@ -954,7 +955,7 @@ async function probeSeconds(
 ): Promise<number> {
   const r = await execFileCaptureAll(
     "ffprobe",
-    ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", absFile],
+    ffprobeSafeArgs(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", absFile]),
     { timeoutMs: 20_000, isCanceled },
   );
   if (r.canceled) throw new Error("Job đã bị hủy");

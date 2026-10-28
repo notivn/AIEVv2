@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { venvPython } from "./config.js";
+import { ffmpegSafeArgs, ffprobeSafeArgs } from "./ffmpegSafe.js";
 import { execFileCaptureAll, ensureDir, HttpError, moveFile, toRepoRel } from "./util.js";
 import { parseTranscriptJson } from "./transcript.js";
 
@@ -286,7 +287,7 @@ export async function probeDurationSec(mediaAbs: string): Promise<number> {
   try {
     probe = await execFileCaptureAll(
       "ffprobe",
-      ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", mediaAbs],
+      ffprobeSafeArgs(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", mediaAbs]),
       { timeoutMs: 20_000 },
     );
   } catch (err) {
@@ -334,7 +335,7 @@ export async function extractAudioWav(input: {
   try {
     wav = await execFileCaptureAll(
       "ffmpeg",
-      ["-y", "-i", videoAbs, "-vn", "-ac", "1", "-ar", "16000", outWavAbs],
+      ffmpegSafeArgs(["-y", "-i", videoAbs, "-vn", "-ac", "1", "-ar", "16000", outWavAbs]),
       { timeoutMs, isCanceled: input.isCanceled },
     );
   } catch (err) {
@@ -374,7 +375,11 @@ export async function transcribeVideo(input: {
   isCanceled?: () => boolean;
 }): Promise<TranscribeResult> {
   const { videoAbs, outJsonAbs, onLog, isCanceled } = input;
-  const language = (input.language ?? "vi").trim() || "vi";
+  const raw = ((input.language ?? "vi").trim() || "vi").toLowerCase();
+  // faster-whisper chỉ nhận mã GỐC ("en", "vi") và ném ValueError với mọi thứ
+  // khác: "en-us" (Gemini bóc lời trả mã BCP-47, Dịch video ghi lại làm ngôn ngữ
+  // nguồn) hay "und" (provider không dò ra) - bóc lại bằng whisper là chết ngay.
+  const language = raw === "und" ? "auto" : raw.split("-")[0];
   const log = (line: string): void => onLog?.(line);
 
   if (!fs.existsSync(videoAbs)) {

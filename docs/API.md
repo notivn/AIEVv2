@@ -24,6 +24,20 @@ GET /api/overview
 
 `/api/health` là endpoint public duy nhất; `apiToken` CHỈ trả khi request đến trực tiếp từ máy chủ
 (loopback, không qua proxy) - web dashboard chạy trên chính máy đó dùng nó cho mọi request sau.
+"Trực tiếp từ máy chủ" (`isLocalRequest` ở util.ts) đòi đủ cả bốn điều kiện: socket loopback; KHÔNG
+có header proxy nào (xét sự có mặt, kể cả giá trị rỗng - proxy rewrite của Next 16 chỉ gắn mỗi
+`x-forwarded-host`); `Host` là `localhost`/`127.0.0.1`/`[::1]` (chặn DNS rebinding); và nếu trình
+duyệt gửi `Origin` thì phải là origin dashboard (`http://localhost:6868`, `http://127.0.0.1:6868`),
+`Sec-Fetch-Site` không phải `cross-site` (chặn CSRF từ website khác). curl/agent/Node không gửi hai
+header đó nên không bị ảnh hưởng.
+
+```
+POST /api/session   (header x-aiev-token) → 204 + Set-Cookie aiev_token (HttpOnly; SameSite=Strict; Secure khi https)
+```
+
+Cookie `aiev_token` do SERVER đặt để không trang nào khác trên localhost (cookie không phân biệt cổng)
+đọc được, và CHỈ xác thực GET/HEAD - thứ không gắn được header như `<img>`, `<video>`, EventSource,
+link tải về. Mọi request ghi phải mang header `x-aiev-token`.
 `runningJob` = job đang chạy ĐẦU TIÊN (field cũ, giữ cho tương thích); `runningJobs` = TẤT CẢ job
 đang chạy (queue song song). `recentProjects` mỗi phần tử kèm `tokensUsed, costUsd`.
 
@@ -62,6 +76,9 @@ cả `npm install`), chạy trong tiến trình server sẽ chặn event loop ~6
   venv/        virtualenv Python (faster-whisper, vieneu) — do start/doctor.mjs dựng
   bin/         binary tải riêng (ffmpeg, cloudflared)
   pip-cache/   PIP_CACHE_DIR
+  venv-gateway/     venv RIÊNG của gateway tạo ảnh (Python >= 3.13) — doctor mục image-gateway
+  chatgpt-gateway/  dữ liệu gateway ChatGPT (SQLite tài khoản + token) — xóa = mất tài khoản đã thêm
+  gemini-web/       cache cookie Google đã xoay vòng của gemini-webapi (GEMINI_COOKIE_PATH)
 ```
 
 **Vì sao gom về đây** (số đo thật trên máy Windows có repo ở ổ F:, ổ C: còn 17,7GB trống): mỗi
@@ -105,9 +122,9 @@ DELETE /api/upload-session/:token   → 204                                     
 
 URL/QR mang token qua query `?k=`; trang `/m` gửi lại qua field `token` (append TRƯỚC `file`). POST `/api/assets` từ máy KHÁC máy chủ (điện thoại LAN/tunnel - không phải loopback, hoặc có `x-forwarded-for`) bắt buộc token phiên upload hợp lệ, đúng project khi scope là `project` - sai/thiếu → `403 UPLOAD_TOKEN_INVALID` ("Link upload đã hết hạn — mở lại mã QR trên máy tính.").
 
-Phạm vi của `?k=` (middleware xác thực ở index.ts) là DANH SÁCH TRẮNG, đúng những gì trang `/m` gọi: `GET /api/projects/:id` (hiện tên project) và `POST /api/assets` (upload). So trên đường dẫn đã chuẩn hóa như router Express (không phân biệt hoa thường, bỏ một `/` cuối); mọi đường khác - kể cả `/media/*`, `/api/lan-info`, timeline/export.xml/media-info/revisions của trình chỉnh sửa, viết hoa hay thường - trả `401 UNAUTHORIZED` dù token phiên còn hạn.
+Phạm vi của `?k=` (middleware xác thực ở index.ts) là DANH SÁCH TRẮNG, đúng những gì trang `/m` gọi: `GET /api/projects/:id` (hiện tên project - chỉ ĐÚNG project của token đó) và `POST /api/assets` (upload). So trên đường dẫn đã chuẩn hóa như router Express (không phân biệt hoa thường, bỏ một `/` cuối); mọi đường khác - kể cả `/media/*`, `/api/lan-info`, timeline/export.xml/media-info/revisions của trình chỉnh sửa, viết hoa hay thường - trả `401 UNAUTHORIZED` dù token phiên còn hạn.
 
-Ngoại lệ: request mang `AIEV_API_TOKEN` (header `x-aiev-token`, cookie `aiev_token` hoặc query `?t=`) được miễn token phiên QR. Đó là dashboard của chính chủ máy mở qua tunnel; token này vốn đã mở được cả chạy agent lẫn xóa project nên đòi thêm mã QR không thêm an toàn, chỉ chặn nhầm.
+Ngoại lệ: request mang `AIEV_API_TOKEN` (header `x-aiev-token`, cookie `aiev_token` với GET/HEAD, hoặc query `?t=`) được miễn token phiên QR. Đó là dashboard của chính chủ máy mở qua tunnel; token này vốn đã mở được cả chạy agent lẫn xóa project nên đòi thêm mã QR không thêm an toàn, chỉ chặn nhầm.
 
 **Đóng modal QR = đóng hết.** Thu hồi token, và nếu đường Internet được bật TỪ CHÍNH modal đó thì
 tắt luôn tunnel (xem [Cloudflare Tunnel](#cloudflare-tunnel-card-trên-trang-connections)). Tab bị
@@ -157,6 +174,14 @@ FileInfo = { name, relPath, size, mtime, kind: "video"|"audio"|"image"|"other" }
 
 ```
 Brief = {
+  sourceKind: "video"|"article"|"request", // video dựng từ đâu (mặc định "video" = edit file tải lên);
+                                           //   article/request = video motion graphics, không footage
+  sourceUrl: string,                       // link bài viết (article) - bản bóc ở assets/source-article.md
+  sourceText: string,                      // yêu cầu / nội dung bằng chữ (request), ≤ 20.000 ký tự
+  narrationMode: "none"|"tts"|"file",      // lồng tiếng cho nguồn article/request (mặc định "none")
+  narrationVoice: TextToVideoVoice,        // giọng AI khi "tts" ({engine,model,name,style,language,speed}) -
+                                           //   PUT nhận partial, field thiếu giữ giọng đang chọn
+  narrationFile: string,                   // giọng thu sẵn khi "file" - relPath "assets/..." (chặn traversal)
   sourceDescription: string,               // mô tả nội dung video gốc (bối cảnh cho AI)
   autoCut: boolean,                        // có tự động cắt ngắn đoạn thừa không (công tắc bật/tắt)
   autoCutLevel: "natural"|"default"|"tight", // mạnh tay tới đâu khi cắt (mặc định "default") -
@@ -189,12 +214,31 @@ Brief = {
   videoStyleId: string|null,               // Phong cách dựng (GET /api/video-styles) - chỉ có hiệu lực khi
                                            //   videoStyleEnabled = true; id không còn trong danh sách → server lùi về null.
                                            //   PATCH gửi videoStyleId mà KHÔNG gửi videoStyleEnabled → server tự bật (hợp đồng cũ)
+  finishMode: "draft"|"final",             // điểm dừng của "Bắt đầu edit bằng AI" (mặc định "draft"; thiếu/sai = "draft"):
+                                           //   "draft" = AI dừng ở bản draft đã QC để người dùng duyệt (phiên goal 'draft'),
+                                           //   "final" = AI làm trọn tới final (phiên goal 'final', hành vi cũ). Giá trị khác → 400 INVALID_BRIEF
   notes: string                            // Yêu cầu edit (prompt) — nội dung chính gửi AI, đổ được từ prompt mẫu
 }
 
 GET /api/projects/:id        → response thêm brief (trả default nếu meta chưa có) 
                                và files.assets có thêm description?: string
 PUT /api/projects/:id/brief  Brief (partial được — merge) → 200 Brief
+
+GET  /api/projects/:id/source/article        → { article: {relPath, title, url, chars, excerpt} | null }
+POST /api/projects/:id/source/article {url}  → 201 { article, brief }  (bóc bằng article.ts như Text to
+     video, ghi assets/source-article.md + mô tả asset, đặt brief.sourceKind="article" + sourceUrl;
+     400 INVALID_URL, lỗi bóc trả kèm hướng dẫn dán tay)
+POST /api/projects/:id/edit → thêm 400 SOURCE_TEXT_REQUIRED (nguồn "request" trống) /
+     SOURCE_URL_REQUIRED (nguồn "article" chưa có link) / NARRATION_FILE_REQUIRED (chọn giọng thu sẵn mà chưa có file)
+
+POST /api/projects/:id/narration {script?} → 202 {taskId, mode}   (agent gọi sau khi viết kịch bản)
+     "tts": body {script} - server tự chia đoạn, đọc bằng ĐÚNG brief.narrationVoice (body không nhận giọng)
+            → assets/narration.wav; "file": body {} - dùng brief.narrationFile
+     cả hai: whisper → assets/narration.transcript.json (mốc từng từ), gắn meta.audio.voice
+     409 NARRATION_NOT_APPLICABLE (nguồn video) / NARRATION_DISABLED (mode none) / NARRATION_BUSY /
+     NARRATION_FILE_MISSING · 400 SCRIPT_REQUIRED / SCRIPT_TOO_LONG (>20.000)
+GET  /api/projects/:id/narration/:taskId → {status: running|done|failed, step, progress, voice?,
+     transcript?, durationSec?, error?}  (task trong bộ nhớ, giữ 1 giờ; 404 TASK_NOT_FOUND → POST lại)
 ```
 
 ## Mô tả asset của project
@@ -224,6 +268,13 @@ PUT  /api/projects/:id/assets/:file/grade              { preset?, adjust? } → 
 POST /api/projects/:id/edit  { extraNotes?: string, model?: string, effort?: string } → 202 { sessionId }
                              → 409 SESSION_BUSY khi project đã có phiên AI đang chạy
 ```
+
+Phiên mở theo `brief.finishMode`: `"draft"` (mặc định) → session `goal: "draft"`, prompt in rõ "DỪNG Ở
+DRAFT - KHÔNG render final" (không thumbnail/publish, bản draft cuối phải ra từ job `assemble-draft`);
+`"final"` → `goal: "final"`, prompt làm trọn tới final như cũ. Prompt luôn in CẢ HAI chiều. Các luồng hàng
+loạt (cắt short, tái chế tỉ lệ, Text to video, Auto cut - `prepareEditSession`) vẫn mở `goal: "final"` bất
+kể brief. "Gửi ghi chú duyệt" tạo phiên mới theo `brief.finishMode`; dùng lại phiên cũ thì prompt theo
+goal của phiên đó.
 
 `model`/`effort` (400 nếu giá trị không hợp lệ) lưu vào chat session - mọi lượt chạy sau của phiên dùng lựa chọn đó.
 
@@ -263,6 +314,108 @@ provider ∈ `claude` | `gemini` | `openai` | `soniox`.
   `/test` gọi `GET https://api.soniox.com/v1/models` (rẻ nhất, không tính tiền, vẫn qua tầng Bearer).
   Không có key thì hệ thống vẫn bóc lời được bằng faster-whisper trên máy - chỉ là không có nhãn người nói.
 
+`GET`/`PUT` trả thêm `gateways: [{id: "chatgpt-web"|"gemini-web", label, roles, installed, connected, status, note}]`
+(field RIÊNG - không có API key trong .env nên không nằm trong `connections`). `POST /api/connections/chatgpt-web/test`
+và `/gemini-web/test` gọi đúng hàm test của `/api/gateways/*` bên dưới.
+
+## Gateway tạo ảnh bằng tài khoản web (ChatGPT / Gemini) — trang /connections
+
+Hai nhà cung cấp ảnh KHÔNG cần API key, chạy thành **tiến trình riêng** bằng venv riêng
+`.runtime/venv-gateway` (Python >= 3.13, doctor mục `image-gateway`, cài bằng
+`node start/doctor.mjs --fix-one image-gateway`). Mã nguồn ở `gateways/` - **AGPL-3.0**, tách khỏi phần MIT.
+
+- **ChatGPT web** - `gateways/chatgpt` (vendored [chatgpt2api](https://github.com/yukkcat/chatgpt2api) 3.2.2,
+  xem `gateways/chatgpt/UPSTREAM.md`). Server tự bật sidecar khi cần: `python aiev_launcher.py 6871` →
+  uvicorn `main:app` trên **127.0.0.1:6871** (`CHATGPT_GATEWAY_PORT` đổi được). Khóa Bearer =
+  `CHATGPT_GATEWAY_KEY` trong `.env`, tự sinh lần đầu. Dữ liệu tài khoản (SQLite) ở `.runtime/chatgpt-gateway/`.
+  Health check `GET /v1/models`; chết thì tự khởi động lại (tối đa 3 lần liên tiếp); launcher tự thoát khi
+  stdin đóng → server bị kill cứng cũng không để lại tiến trình mồ côi. Env của sidecar bị lọc bỏ mọi biến
+  dạng KEY/TOKEN/SECRET của AIEV. **AIEV không lưu token** - chuyển thẳng sang `POST /api/accounts` của gateway.
+- **Gemini web** - `gateways/gemini-web/worker.py` (gemini-webapi 2.1.1), worker JSON-lines sống lâu (mẫu
+  `ttsLocal.ts`) để `auto_refresh` xoay vòng cookie liên tục; bật sẵn 20s sau khi server khởi động nếu đã có
+  cookie. Cookie lưu `apps/server/data/gemini-web.json` (gitignore, không serve), cache cookie xoay vòng ở
+  `.runtime/gemini-web/`. Không bao giờ init client với PSID rỗng. Chỉ lấy `generated_images` (bỏ `web_images`).
+  Logo sparkle nhìn thấy được gỡ bằng `gateways/gemini-watermark-remover` (MIT, fail-open; SynthID vô hình thì không).
+
+```
+GET    /api/gateways/chatgpt                    → {installed, running, accounts:[{id, email?, plan?, status,
+                                                    imageQuotaRemaining?, resetAt?, expiresAt?}], error?}
+                                                    status: ok | limited | expired | error | disabled
+                                                    (chỉ bật sidecar khi đã từng thêm tài khoản)
+POST   /api/gateways/chatgpt/accounts {session} → 201 account
+                                                    session = nguyên JSON https://chatgpt.com/api/auth/session
+                                                    HOẶC chỉ accessToken ("Bearer ..." cũng được)
+DELETE /api/gateways/chatgpt/accounts/:id       → 204 | 404 ACCOUNT_NOT_FOUND
+POST   /api/gateways/chatgpt/test               → {ok, message}
+GET    /api/gateways/gemini-web                 → {installed, configured, psidMasked?, status, lastOkAt?}
+                                                    status: not-installed | not-configured | untested | ok | expired | error
+PUT    /api/gateways/gemini-web/cookies {psid, psidts?} | {cookie} → {ok, message}
+                                                    cookie = cả chuỗi header Cookie (hoặc bảng Cookies của DevTools);
+                                                    server tự tách __Secure-1PSID / __Secure-1PSIDTS, lưu rồi đăng nhập thử
+DELETE /api/gateways/gemini-web/cookies         → 204 (tắt luôn worker)
+POST   /api/gateways/gemini-web/test            → {ok, message}  (chỉ đăng nhập, không tạo ảnh)
+GET    /api/image-providers                     → {default, gatewayDelaySec, providers:[{id, label, configured, models:[...]}]}
+PUT    /api/image-providers {default?, gatewayDelaySec?} → {default, gatewayDelaySec}   lưu apps/server/data/image-providers.json
+                                                    gatewayDelaySec: số nguyên 0-600 (mặc định 10), sai → 400 INVALID_GATEWAY_DELAY
+```
+
+**Hàng đợi gateway web** (`imageProviders/gatewayQueue.ts`): ảnh qua `chatgpt-web` và `gemini-web` đi
+qua một hàng đợi RIÊNG cho mỗi gateway - mỗi lúc chỉ vẽ một ảnh, xong (kể cả lỗi) thì nghỉ
+`gatewayDelaySec` giây rồi mới tới ảnh kế tiếp, ảnh đến muộn sau khi hàng đã trống cũng phải chờ hết
+khoảng nghỉ. Áp dụng cho MỌI đường tạo ảnh (ảnh minh họa, editor, image project, thumbnail, nền
+auto-cut) vì tất cả đi qua `generateImage()`. `gemini-api` chạy thẳng, không xếp hàng. Lời gọi đồng
+bộ (`POST /api/illustrations`) chờ cả thời gian xếp hàng - client cần timeout dài.
+
+Mã lỗi: `400 INVALID_SESSION` (không tìm thấy accessToken), `400 INVALID_COOKIE`, `503 GATEWAY_NOT_INSTALLED`,
+`503 GATEWAY_UNAVAILABLE` (sidecar không lên / chưa có tài khoản dùng được / cổng bị chiếm), `401 GATEWAY_AUTH_FAILED`
+(token/cookie sai hoặc hết hạn), `429 GATEWAY_RATE_LIMITED`, `504 GATEWAY_TIMEOUT`, `502 GATEWAY_FAILED`.
+Thông báo tiếng Việt; lỗi tiếng Trung của chatgpt2api được dịch ở `imageProviders/errors.ts` (còn sót chữ Hán →
+câu chung tiếng Việt).
+
+**Provider id**: `"gemini-api" | "chatgpt-web" | "gemini-web"`, cộng `"auto"` = provider mặc định (`default`)
+rồi lần lượt các provider ĐÃ CẤU HÌNH còn lại (`default: "auto"` → thứ tự gemini-api, chatgpt-web, gemini-web).
+Ở chế độ auto, provider hỏng thì thử provider kế tiếp; chọn đích danh một provider thì không rơi sang cái khác.
+Giá trị `model` cũ giữ tương thích (`brief.illustrationModel`, `meta.model` của image project, body `model`):
+id model Gemini API (vd `gemini-3.1-flash-image`) = provider `gemini-api` với model đó; giá trị mới
+`"auto" | "chatgpt-web" | "gemini-web" | "gemini-api"`. Mọi đường tạo ảnh (illustrations, image project,
+thumbnail, nền auto-cut, generate-image) đi qua `apps/server/src/imageProviders/index.ts → generateImage()`:
+prompt luôn qua `buildImagePrompt` (Style Design + phong cách dựng), ảnh ra luôn **cover-fit bằng ffmpeg** về
+đúng kích thước khung (1080x1920 / 1920x1080 / 1080x1080 / 1080x1350, hoặc đúng `width x height` của project).
+
+## Tạo ảnh từ trình chỉnh sửa — cảnh trám / layer (generate-image)
+
+```
+POST /api/projects/:id/generate-image {prompt, provider?, purpose: "filler"|"layer", allowText?}
+     → 202 {taskId}
+     → 409 AGENT_BUSY (có phiên AI đang chạy/chờ chạy lại trên project) · 503 NO_IMAGE_PROVIDER ·
+       503 GATEWAY_NOT_INSTALLED (chọn đích danh gateway chưa cài) · 429 TOO_MANY_TASKS (>3 ảnh/project cùng lúc)
+GET  /api/projects/:id/generate-image/:taskId
+     → {status: "running"|"done"|"failed", relPath?, provider?, error?:{code, message}, elapsedSec}
+     → 404 TASK_NOT_FOUND (quá 1 giờ sau khi xong, hoặc server đã khởi động lại)
+```
+Chạy nền TRONG BỘ NHỚ - KHÔNG chiếm render queue (gateway web có thể mất 30s-10 phút). Prompt đi qua
+`buildImagePrompt` với Style Design + phong cách dựng của brief, bố cục `video`, vị trí chủ thể
+`brief.illustrationPosition`; `allowText` mặc định false. Ảnh cover-fit về đúng `width x height` của project,
+lưu `assets/generated/<slug>.png` (`relPath` tương đối trong project, vd `assets/generated/hoang-hon.png`) + mô tả
+trong assets.json. Đây là thao tác TAY nên KHÔNG bị công tắc "Ảnh minh họa AI" chặn; `409 AGENT_BUSY` để agent
+không dùng đường này lách công tắc (`ILLUSTRATIONS_DISABLED` của `/api/illustrations` giữ nguyên).
+
+Trình chỉnh sửa còn gọi endpoint này từ ô "Tạo bằng AI tại đây" của timeline (chuột phải / phím G): ảnh vào
+ĐÚNG mốc đã chọn - layer từ mốc đó, cảnh trám thì tách scene tại mốc rồi chèn (`insertSceneAtFrame` trong
+`components/editor/ops.ts`; không có `audio.voice` thì cue/layer/sfx từ mốc trở đi lùi theo độ dài cảnh trám).
+
+## Chữ AI cho layer chữ tại một mốc timeline (generate-text)
+
+```
+POST /api/projects/:id/generate-text {prompt, atSec?, context?}
+     → 200 {text}            (tối đa 160 ký tự)
+     → 400 PROMPT_REQUIRED / PROMPT_TOO_LONG (>1000) / INVALID_CONTEXT / INVALID_AT_SEC
+     → 502 TEXT_PARSE_FAILED · 503 NO_CLAUDE_AUTH
+```
+Claude một lượt, không tool (`aiText.ts`), usage tag `editortext`. `context` = lời thoại quanh mốc (editor gửi
+karaoke/phụ đề ±5s, cắt 1500 ký tự). KHÔNG ghi meta.json - editor tự chèn layer chữ (một bước hoàn tác, đi qua
+PUT timeline có phiên bản như mọi thao tác tay).
+
 ## Cloudflare Tunnel (card trên trang /connections)
 
 ```
@@ -288,11 +441,14 @@ người dùng đã xong việc là phơi dashboard ra Internet mà không ai đ
 
 ```
 POST /api/illustrations
-  { projectId, prompt, name?, aspect?, model?, styleId?, description?, allowText?, position? }
-  → 201 { file, relPath, promptUsed }
+  { projectId, prompt, name?, aspect?, provider?, model?, styleId?, description?, allowText?, position? }
+  → 201 { file, relPath, promptUsed, provider }
   → 409 ILLUSTRATIONS_DISABLED khi project TẮT "Ảnh minh họa AI" (brief.autoIllustrations = false)
 ```
-Tạo ảnh minh họa bằng Gemini và lưu thẳng vào `video-projects/<projectId>/assets/`.
+Tạo ảnh minh họa qua `generateImage()` (Gemini API / ChatGPT web / Gemini web - xem mục "Gateway tạo ảnh")
+và lưu thẳng vào `video-projects/<projectId>/assets/illustrations/`. Nhà cung cấp: `provider` → `model` →
+`brief.illustrationModel` → mặc định ở trang Kết nối. Thiếu `aspect` → ảnh đúng `width x height` của project
+(trước đây mặc định 9:16); có `aspect` → kích thước chuẩn của tỉ lệ đó. `provider` trả về = nhà cung cấp đã vẽ.
 **Công tắc `brief.autoIllustrations` chặn ngay tại endpoint** (trước khi tạo thư mục hay gọi Gemini):
 tắt thì không có đường nào sinh được ảnh cho video đó. Prompt edit cũng nói rõ "Ảnh minh họa AI: TẮT -
 CẤM sinh ảnh", nhưng prompt chỉ là lời khuyên - skill dài hàng nghìn chữ vẫn lấn át được, nên chốt
@@ -324,7 +480,7 @@ Chi tiết kỹ thuật (đã verify 2026-07-29):
 ## Thumbnail video project (POST /api/projects/:id/thumbnail)
 
 ```
-POST /api/projects/:id/thumbnail  { title, frameAt?, sourceRel?, bgPrompt?, styleId? } → 201 { file: "thumbnail.png", relPath }
+POST /api/projects/:id/thumbnail  { title, frameAt?, sourceRel?, bgPrompt?, styleId?, provider? } → 201 { file: "thumbnail.png", relPath }
 ```
 Chạy ĐỒNG BỘ (~1 phút): ffmpeg cắt frame tại giây `frameAt` (mặc định 1) từ video (`sourceRel`,
 mặc định output final trong meta, fallback video asset đầu) → Gemini vẽ nền theo Style Design
@@ -616,6 +772,8 @@ GET  /api/tts/models    -> TtsModel[] (live từ Google, cache 1h)
 GET  /api/tts/engines   -> [{ engine: "gemini"|"vieneu", available: bool, canClone: bool,
                               reason: string|null, detail: string }]
                            - engine nào dùng được TRÊN MÁY NÀY; chỉ vieneu nhân bản được giọng
+     ?refresh=1         -> dò lại từ đầu + xóa cờ LOAD_FAILED (nút "Kiểm tra lại"). Không có
+                           refresh thì cờ LOAD_FAILED tự hết sau 2 phút, lần gọi kế tiếp nạp lại thật
 GET  /api/tts/voices[?engine=] -> TtsVoice[] - không truyền engine = giọng của CẢ HAI engine;
                            engine chưa dùng được thì phần của nó rỗng, KHÔNG ném lỗi
 GET  /api/tts/languages -> [{ code, label }] - danh sách mã ngôn ngữ (tĩnh)
@@ -773,10 +931,13 @@ còn -25dB ra 21. `thresholdNote` luôn nói rõ vì sao ngưỡng đó thắng.
 `auto-trim`, `sceneId` mang mức mạnh tay. `cutCandidates` là các khoảng `{start, end}` mà người/AI
 **đã duyệt** từ `deadWeight` (server không tự duyệt hộ: từ đệm tiếng Việt trùng mặt chữ với từ có
 nghĩa, chỉ ngữ nghĩa mới phân biệt được). Job chạy:
-đo lại (có hàng rào) → gộp khoảng lặng + khoảng đã duyệt (khử chồng lấn) → bỏ khoảng nào đè lên
-TRUNG ĐIỂM của một chữ (lưới an toàn cuối, có ghi log từng khoảng bị loại) → cắt MỘT lượt ffmpeg ra
-`assets/<stem>.cut.mp4` → dời mốc transcript ra `assets/transcript.cut.json` → nghiệm thu bản ĐÃ CẮT
-bằng chính mốc đã dời → ghi `assets/auto-trim-report.json`.
+đo lại (có hàng rào) → gộp khoảng lặng + khoảng đã duyệt (khử chồng lấn) → bỏ khoảng nào CẮT NGANG
+một chữ (chứa trung điểm của chữ mà một mép chữ thò ra ngoài quá 0,02s - chữ nằm TRỌN trong khoảng
+là chữ người duyệt cố ý bỏ nên vẫn cắt; lưới an toàn cuối, có ghi log từng khoảng bị loại) → dời mép
+đoạn giữ về khe giữa hai frame video (không dời thì mỗi mối nối concat dôi vài ms, phụ đề cuối video
+chạy sớm hơn tiếng) → cắt MỘT lượt ffmpeg ra `assets/<stem>.cut.mp4` → dời mốc transcript (cùng các
+đoạn giữ đã căn frame) ra `assets/transcript.cut.json` → nghiệm thu bản ĐÃ CẮT bằng chính mốc đã dời
+→ ghi `assets/auto-trim-report.json`.
 
 ```
 AutoTrimReport = {
@@ -786,7 +947,7 @@ AutoTrimReport = {
   removed: { silenceSec, approvedSec, ranges },        // approvedSec = phần CỘNG THÊM nhờ ứng viên
                                                        //   đã duyệt (đã trừ chỗ chồng khoảng lặng)
   threshold: { db, noiseFloorDb, note },
-  candidates: { approved, rejected: [{start, end}] },  // rejected = bị lưới trung điểm chặn
+  candidates: { approved, rejected: [{start, end}] },  // rejected = khoảng cắt ngang một chữ
   verification: TrimVerification & { measuredOn, guarded },
   verdict: "pass"|"fail", note
 }
@@ -880,8 +1041,9 @@ DUY NHẤT - không có file timeline song song.
 ```
 Timeline = { scenes: Scene[], audio: { voice: string|null, sfx: Sfx[], music: Music|null, ... },
              captions: CaptionCue[], subtitles: SubtitleCue[], subtitleStyle?: SubtitleStyle,
-             overlays: HighlightCue[] }
+             overlays: HighlightCue[], layers: Layer[] }
            — đúng schema zod ở engines/remotion/src/manifest.ts; mọi object giữ nguyên field lạ.
+             `layers` (EDITOR-V2) luôn là mảng trong bản GET trả về ([] khi meta chưa có).
              scenes[].from/to = GIÂY trong file nguồn; sfx[].atFrame + mọi cue = FRAME tuyệt đối;
              music.speech = GIÂY. Đường dẫn media luôn tương đối thư mục project.
 MediaInfo = { durationSec: number|null, width?, height?, hasAudio? }
@@ -928,11 +1090,27 @@ POST /api/projects/:id/editor/chat   { message, sessionId?, model?, effort? } �
   → 400 MESSAGE_REQUIRED | INVALID_MODEL | INVALID_EFFORT | INVALID_SESSION_ID
        | SESSION_PROJECT_MISMATCH | SESSION_NOT_EDITOR
   → 404 SESSION_NOT_FOUND, 409 SESSION_BUSY
+
+POST /api/projects/:id/editor/handoff { instruction, finishMode?: "draft"|"final", model?, effort? }
+  → 202 { sessionId, finishMode, beforeRev: string|null }
+  → 400 INSTRUCTION_REQUIRED | INVALID_INSTRUCTION | INSTRUCTION_TOO_LONG (> 8000 ký tự)
+       | INVALID_FINISH_MODE | INVALID_MODEL | INVALID_EFFORT
+  → 404 PROJECT_NOT_FOUND, 409 AGENT_BUSY
 ```
 
+**Giao cho AI (handoff).** "Tôi giám sát" → AI làm tiếp từ ĐÚNG timeline hiện tại. Mở phiên dựng video
+mới (title `Giao cho AI: <tên project>`, goal = `finishMode`, mặc định `"draft"` - KHÔNG theo brief) với
+prompt edit chuẩn + khối "BÀN GIAO TỪ TRÌNH CHỈNH SỬA": đọc lại meta.json, GIỮ mọi chỉnh sửa tay (kể cả
+`layers[]`, `fit`/`transform`/`crop`/`color`/`volume`/fade/`speed`/`transition`), bước nào trong brief đã
+làm thì không làm lại, rồi làm theo `instruction`. Trước khi agent chạy server chụp revision `ai-before`
+và trả `beforeRev` - nút "Hoàn tác" khôi phục bản này (`POST /api/projects/:id/timeline/revisions/:rev/restore`). Khi bản mới
+nhất của lịch sử đã cùng version (không chụp thêm) thì `beforeRev` là bản đó; chụp lỗi → `null`. Bất kỳ
+phiên AI nào của project đang chạy/chờ tự chạy lại → 409 `AGENT_BUSY`.
+
 **Version & khóa.** `version` = 16 ký tự hex đầu của sha1(`JSON.stringify` object
-`{ scenes, audio, captions, subtitles, subtitleStyle, overlays }` đúng thứ tự đó, khóa thiếu = `null`)
-tính trên giá trị THÔ trong meta.json. Đổi brief/tên/status không đổi version. Mọi lệnh GHI (PUT,
+`{ scenes, audio, captions, subtitles, subtitleStyle, overlays, layers }` đúng thứ tự đó, khóa thiếu = `null`)
+tính trên giá trị THÔ trong meta.json - RIÊNG `layers` thiếu thì bỏ hẳn khỏi object băm (không ghi
+`null`), nên project chưa có layer giữ nguyên version như trước khi có EDITOR-V2. Đổi brief/tên/status không đổi version. Mọi lệnh GHI (PUT,
 restore) trả `409 AGENT_BUSY` khi có phiên AI của project đang chạy hoặc đang chờ tự chạy lại; đọc
 vẫn được. Job render đang chạy KHÔNG khóa (assemble chụp meta lúc bắt đầu) - `lock.renderActive` =
 có job `scene-*`/`assemble-*` của project đang chạy hoặc chờ, để UI báo bản đang render không có thay
@@ -942,15 +1120,16 @@ có job `scene-*`/`assemble-*` của project đang chạy hoặc chờ, để UI
 **`preview.mediaVersions`** = `{ [relPath]: mtimeMs }` (ms, `Math.floor` - số nguyên) cho MỌI file media
 timeline tham chiếu mà CÓ trên đĩa: file xem trước đã chọn trong `sceneRenders`, `scenes[].srcVideo`,
 `scenes[].srcImage`, `scenes[].render` (scene không có `src`), `audio.voice`, `audio.sfx[].file`,
-`audio.music.file` và `watermark.file`. Khóa là ĐÚNG chuỗi đường dẫn như trong meta / `sceneRenders` /
+`audio.music.file`, `layers[].src` và `watermark.file` (`preview.media` cũng đo `layers[].src` - trình
+phát lấy width/height làm tỉ lệ hộp layer). Khóa là ĐÚNG chuỗi đường dẫn như trong meta / `sceneRenders` /
 `watermark.file` (tương đối project); file thiếu, đường dẫn vượt rào → không có khóa. Trình phát gắn
 `?v=<số>` vào URL `/media/...` của file đó: render lại scene hay chép đè logo giữ nguyên TÊN file,
 không có số này trình duyệt phát bản cũ trong cache. Số đổi ⇔ file trên đĩa đã đổi.
 
 **PUT.** Khóa nào có trong `timeline` thì THAY NGUYÊN khóa đó, khóa không gửi giữ nguyên trên đĩa;
 mọi khóa khác của meta.json (`brief`, `status`, `output`, `tags`, field lạ của agent) không bao giờ bị
-đụng. Khóa ngoài 6 khóa trên → issue `timeline.<khóa>`. `subtitleStyle: null` = xóa khóa (về mặc
-định - zod để optional, không nullable). Gửi `timeline: {}` = không ghi gì, trả bản hiện tại. Ghi
+đụng. Khóa ngoài 7 khóa trên → issue `timeline.<khóa>`. `subtitleStyle: null` = xóa khóa (về mặc
+định - zod để optional, không nullable); `layers: null` cũng = xóa khóa. Gửi `timeline: {}` = không ghi gì, trả bản hiện tại. Ghi
 nguyên tử (file tạm + rename, thử lại khi Windows giữ file). `label` tối đa 120 ký tự.
 
 **Validate (tay, bám `manifest.ts` - server không dùng zod).** Chỉ soi các khóa CÓ trong body - meta do
@@ -963,9 +1142,37 @@ render. `audio.voice` chuỗi|null; `sfx[]`: `file` không rỗng, `atFrame` ngu
 `mediaStart` ≥ 0; `music`: `file`, `volume`/`duckVolume` 0..1, `speech` mảng cặp số. Cue: `from` nguyên
 ≥ 0, `durationInFrames` nguyên dương; captions `words` ≥ 1 (`text` không rỗng, `start`/`end` ≥ 0);
 subtitles `text` không rỗng; overlays `parts` ≥ 1 (`t` không rỗng), `tier` ∈ main|sub, `accent` ∈
-hot|cool; `subtitleStyle.backdrop` ∈ blur|solid|none. Đường dẫn media: tương đối, không tuyệt đối
+hot|cool; `subtitleStyle.backdrop` ∈ blur|solid|none; mọi cue có thể có `transform` { `x`/`y` -1..1 (phần
+của rộng/cao khung, dời so với chỗ neo mặc định), `scale` 0.3..3 } - editor ghi khi kéo cue trên khung
+xem trước. Đường dẫn media: tương đối, không tuyệt đối
 (posix lẫn `C:\`/`C:foo`/`file://`), không đoạn `..`, không trỏ file/thư mục ẩn, và resolve xong phải
 nằm trong thư mục project (cùng hàng rào với `stage()` của jobs/assemble.ts). Tối đa 200 issue.
+
+**Field EDITOR-V2 (`docs/EDITOR-V2-PLAN.md` mục 1 - mọi field tùy chọn, thiếu = hành vi cũ).** Validate
+kiểu + khoảng, ngoài khoảng → issue như trên (zod của engine có ĐÚNG các khoảng này):
+- `scenes[]`: `fit` ∈ cover|contain; `transform` `{x,y: -1..1, scale: 0.1..5, rotate: -180..180, flipH,
+  flipV: boolean}` (x/y = độ DỊCH tỉ lệ cạnh khung); `crop` `{top,right,bottom,left}` mỗi cạnh 0..0.45;
+  `color` ColorAdjust; `volume` 0..2; `fadeInSec`/`fadeOutSec` 0..10; `speed` 0.25..4; `transition.type` ∈
+  fade|slide-left|slide-right|slide-up|slide-down|wipe-left|wipe-right|zoom-in|zoom-out|blur|none.
+  Có `speed` thì độ dài scene footage (khi không khai `durationInFrames`) = (round(to·fps) − round(from·fps))
+  / speed, làm tròn - một helper ở `engines/remotion/src/duration.ts`, song sinh `sceneDurationFrames`
+  trong `apps/server/src/timeline.ts` (layoutScenes, assemble, trình phát, editor dùng chung công thức).
+- ColorAdjust (scene + layer): `preset` ∈ 14 id của `GET /api/grade-presets`; `brightness`, `contrast`,
+  `saturation`, `temperature`, `tint` -1..1; `hue` -180..180; `vignette` 0..1; `blur` 0..20 (px).
+- `audio.sfx[]` + `audio.music`: `fadeInSec`/`fadeOutSec` 0..10. Fade ra của sfx tính từ CUỐI file: assemble
+  đo độ dài bằng ffprobe, trình phát lấy từ `preview.media`, điền `mediaDurationSec` vào manifest.
+- `layers[]`: `id` chuỗi không rỗng, không trùng; `kind` ∈ image|video|text|shape; `from` nguyên ≥ 0,
+  `durationInFrames` nguyên dương (FRAME tuyệt đối); image/video BẮT BUỘC `src` (cùng hàng rào đường dẫn,
+  được stage trong assemble); `mediaStart` ≥ 0; `muted` boolean; `volume` 0..2; `text` chuỗi; `style`
+  (`fontSizePx` (0..1000], `fontWeight` 100..1000, `align` ∈ left|center|right, `lineHeight` 0.5..5,
+  `paddingPx` 0..1000, `radiusPx` 0..5000, `strokeWidthPx` 0..100, `shadow` boolean, các màu/font là
+  chuỗi); `width` 0.05..2; `aspect` 0.05..20; `transform` như scene (x/y = TÂM hộp); `opacity` 0..1; `fit`,
+  `crop`, `color` như scene; `radiusPx` 0..5000; `animation.in/out` ∈
+  none|fade|slide-up|slide-down|slide-left|slide-right|pop|zoom, `animation.durationSec` 0..10;
+  `keyframes[]`: `frame` nguyên ≥ 0 (TƯƠNG ĐỐI layer.from), `x`/`y` -1..1, `scale` 0.1..5, `rotate`
+  -180..180, `opacity` 0..1, `ease` ∈ linear|in|out|inOut.
+- Field chỉ có ở bản resolved (do assemble/trình phát điền, KHÔNG lưu trong meta): `layers[].mediaAspect`,
+  `audio.sfx[].mediaDurationSec`. FCP7 XML bỏ qua `layers` và chưa biểu diễn `speed`.
 
 **Lịch sử phiên bản** - `video-projects/<id>/.history/<rev>.json` = `{ rev, createdAt, label, source,
 version, timeline }` (timeline thô, khóa thiếu = null). `rev` = thời gian ISO với `:`/`.` đổi thành `-`
@@ -975,7 +1182,7 @@ buổi kéo thả dài đẻ cả trăm bản `editor` không đẩy rơi điể
 khôi phục, source `restore`, label = rev được khôi phục), phiên AI gắn project BẮT ĐẦU (`ai-before`)
 và KẾT THÚC mà version đổi (`ai-after`) - label = tiêu đề phiên. Bỏ qua khi bản mới nhất đã cùng
 version; các lần PUT liên tiếp cùng label trong 10 giây gộp vào bản đầu loạt (tự lưu ~700ms khi kéo
-không được đẩy mất bản "trước khi AI sửa"). Restore thay CẢ 6 khóa (null = xóa khóa) đúng nguyên trạng,
+không được đẩy mất bản "trước khi AI sửa"). Restore thay CẢ 7 khóa (null = xóa khóa - bản lịch sử cũ không có `layers` thì khôi phục xong là không có layer) đúng nguyên trạng,
 không validate lại. Chụp hỏng chỉ ghi log - không bao giờ chặn lưu hay làm hỏng lượt chạy AI.
 `.history/` nằm trong `.gitignore` và `/media` không phục vụ dotfile.
 
@@ -1019,7 +1226,7 @@ cả video), TẮT = cấm. Lượt sau kèm lời nhắc ngắn cùng ý - gi�
 phải phiên dựng video goal 'final' (`SESSION_NOT_EDITOR`). Bất kỳ phiên AI nào của project đang chạy
 hoặc chờ tự chạy lại → 409 `SESSION_BUSY`. model/effort như `/api/chat`.
 
-**null ở khóa tùy chọn.** `audio`, `captions`, `subtitles`, `subtitleStyle`, `overlays` (và `audio.sfx`)
+**null ở khóa tùy chọn.** `audio`, `captions`, `subtitles`, `subtitleStyle`, `overlays`, `layers` (và `audio.sfx`)
 mang giá trị `null` = "không có": jobs/assemble.ts xóa chúng khỏi props trước khi ghi
 `props.resolved.json` (zod của engine chỉ điền mặc định cho khóa THIẾU, gặp null là từ chối cả manifest),
 validator trước render soi đúng bản đã chuẩn hóa đó, và trình phát vốn đã hiểu vậy (`timelineForClient`
@@ -1317,7 +1524,8 @@ ChatSession = { sessionId, title, projectId, status, model, effort,
                 runStartedAt: string|null,   // ISO — lúc lượt chạy hiện tại BẮT ĐẦU (không reset khi auto-resume)
                 runFinishedAt: string|null,  // ISO — lúc lượt chạy kết thúc hẳn; null khi đang chạy
                 autoResume: boolean,         // tự chạy tiếp khi gián đoạn (mặc định true)
-                goal: "final"|null,          // "final" = phiên edit project, gate hoàn thành theo video final
+                goal: "final"|"draft"|null,  // "final" = phiên edit project, gate hoàn thành theo video final;
+                                             // "draft" = gate theo bản draft đã QC (brief.finishMode = "draft")
                 createdAt, updatedAt }
 
 GET  /api/chat/sessions[?projectId=]  → ChatSession[]
@@ -1352,6 +1560,14 @@ tồn tại thật (`normOutput(meta.output)` null, file không có trên đĩa,
 (tôn trọng autoResume + interrupt, tối đa 12 lần liên tiếp không tiến bộ — có tiến bộ thì đếm lại
 từ 0); hết lượt mà vẫn thiếu final → status "error" + message giải thích. Phiên goal 'final' chạy
 với maxTurns 300 (phiên thường 100).
+
+**Goal 'draft' (brief.finishMode = "draft", và handoff mặc định):** cùng hạ tầng, cùng trần lượt/cap
+resume của Cấu hình, khác điều kiện xong: phải có job `assemble-draft` **done** kết thúc SAU `runStartedAt`
+của lượt hiện tại VÀ `qc.json` đo đúng file draft đó (`report.file` = `job.outputPath`, `checkedAt` ≥
+`job.finishedAt`, chưa stale). QC `fail` vẫn tính là đã QC (prompt bảo agent sửa; cổng QC của
+assemble-final mới là chốt chặn). Ngoại lệ: chuỗi lượt (từ message mới của user) KHÔNG đổi version
+timeline → chỉ cần một draft đã QC kể từ lúc tạo phiên (lượt hỏi đáp không bị ép render lại). Draft render
+bằng CLI tay không có job nên không tính.
 
 Agent chạy với cwd = repo root, nạp CLAUDE.md + `.claude/skills` của workspace, được phép Edit/Write file và chạy các lệnh whitelist trong `.claude/settings.json` không cần hỏi. Nếu thiếu API key: event `agent` kind `error` với message hướng dẫn đặt `ANTHROPIC_API_KEY` trong `.env`.
 
@@ -1407,6 +1623,6 @@ POST /api/update/apply  → 202 { ok: true, logHint, target } | 409 JOB_RUNNING 
 - Asset không đọc trực tiếp từ đường dẫn tuyệt đối — server stage bằng hardlink (`fs.linkSync`, fallback copy) vào `engines/remotion/public/staging/<projectId>/` rồi props dùng `staticFile("staging/<projectId>/<file>")`.
 - Nhạc nền: `audio.music = { file, volume=0.35, duckVolume=0.12, speech: [[startSec,endSec],...] } | null`
   (file copy vào `assets/` của project, server stage như sfx). Component `MusicTrack` loop cả bài,
-  fade-in 0.5s đầu / fade-out 1s cuối, và duck TẤT ĐỊNH: trong speech range (đoạn CÓ thoại, giây trên
+  fade-in 0.5s đầu / fade-out 1s cuối (ghi đè bằng `fadeInSec`/`fadeOutSec`, 0 = không fade), và duck TẤT ĐỊNH: trong speech range (đoạn CÓ thoại, giây trên
   timeline composition) volume = duckVolume, ngoài = volume, chuyển mượt bằng interpolate trong 0.4s
   quanh mỗi biên. Speech ranges do AI sinh từ transcript (merge gap < 0.6s) — xem skill `background-music`.

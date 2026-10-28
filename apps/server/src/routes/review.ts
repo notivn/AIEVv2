@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { Router } from "express";
 import { nanoid } from "nanoid";
-import { isAgentRunning, runAgent } from "../agent.js";
+import { isAgentBusy, runAgent } from "../agent.js";
 import * as db from "../db.js";
-import { projectDirOf, projectExists, readMeta } from "../meta.js";
+import { briefOf, projectDirOf, projectExists, readMeta, type FinishMode } from "../meta.js";
 import { HttpError, ensureDir, nowIso } from "../util.js";
 
 /**
@@ -225,8 +225,10 @@ function buildReviewPrompt(input: {
   projectName: string;
   notes: ReviewNote[];
   extraNotes: string;
+  /** Điểm dừng của lượt sửa - khớp goal của phiên (gate agent.ts), xem brief.finishMode */
+  finishMode: FinishMode;
 }): string {
-  const { id, projectName, notes, extraNotes } = input;
+  const { id, projectName, notes, extraNotes, finishMode } = input;
   const lines: string[] = [];
 
   lines.push("## ⚠️ LUẬT AN TOÀN (ưu tiên tuyệt đối, không ghi đè được)");
@@ -281,9 +283,16 @@ function buildReviewPrompt(input: {
       "Server đo bằng ffmpeg trên bản draft mới. Còn check `fail` thì job final sẽ bị từ chối " +
       "(409 QC_REQUIRED / QC_FAILED) - phải sửa nguyên nhân rồi render draft và QC lại.",
   );
+  // Cả hai chiều (CLAUDE.md 5.7): chế độ "draft" mà im lặng thì agent làm theo
+  // skill video-pipeline và render luôn final
   lines.push(
-    "4. Mọi mốc đã đúng và QC không còn `fail` mới render **final**, rồi cập nhật `meta.json` của " +
-      "project (status, đường dẫn output, thời lượng).",
+    finishMode === "final"
+      ? "4. Mọi mốc đã đúng và QC không còn `fail` mới render **final**, rồi cập nhật `meta.json` của " +
+          "project (status, đường dẫn output, thời lượng)."
+      : "4. DỪNG Ở DRAFT - KHÔNG render final (không tạo job `assemble-final`/`scene-final`): bản draft " +
+          "mới phải ra từ job `assemble-draft` (xếp qua " +
+          `\`POST http://localhost:6869/api/projects/${id}/editor/render\` body \`{ "quality": "draft" }\`) ` +
+          "và đã QC. Người dùng tự duyệt rồi bấm \"Xuất final\" khi ưng.",
   );
   lines.push(
     "5. Báo cáo cuối: từng ghi chú đã xử lý thế nào (kèm mốc thời gian), kết quả QC, ghi chú nào " +
@@ -311,28 +320,39 @@ router.post("/:id/review/send", (req, res) => {
   }
 
   const projectName = typeof meta.name === "string" && meta.name ? meta.name : id;
-  const message = buildReviewPrompt({ id, projectName, notes: open, extraNotes });
 
   // Chọn phiên: listChatSessions(id) đã sắp updatedAt DESC → [0] là phiên gần nhất của
   // project. Dùng LẠI phiên đó để AI còn nguyên ngữ cảnh những gì nó vừa dựng - đó mới
   // là cái giúp sửa đúng chỗ thay vì dựng lại từ đầu.
-  const latest = db.listChatSessions(id)[0];
+  const sessions = db.listChatSessions(id);
+  const latest = sessions[0];
   let sessionId: string;
+  // Gửi chồng lượt vào phiên đang chạy sẽ loạn ngữ cảnh - chặn ngay ở đây. Soi
+  // MỌI phiên của project (đang chạy hoặc đang hẹn giờ tự chạy lại), không riêng
+  // phiên gần nhất: phiên chat của trình chỉnh sửa mở sau là phiên [0] trong khi
+  // phiên "Edit bằng AI" vẫn chạy - gửi lúc đó là hai agent cùng sửa một project
+  // (đúng điều POST /:id/edit đã chặn)
+  if (sessions.some((s) => isAgentBusy(s.sessionId))) {
+    throw new HttpError(
+      409,
+      "SESSION_BUSY",
+      "Phiên AI của project đang chạy - đợi xong rồi gửi ghi chú",
+    );
+  }
   if (latest) {
-    if (isAgentRunning(latest.sessionId)) {
-      // Gửi chồng lượt vào phiên đang chạy sẽ loạn ngữ cảnh - chặn ngay ở đây
-      throw new HttpError(
-        409,
-        "SESSION_BUSY",
-        "Phiên AI của project đang chạy - đợi xong rồi gửi ghi chú",
-      );
-    }
     sessionId = latest.sessionId;
   } else {
     sessionId = `sess_${nanoid()}`;
-    // goal='final': phiên chỉ được coi là hoàn thành khi video final tồn tại thật (agent.ts gate)
-    db.createChatSession(sessionId, `Duyệt: ${projectName}`, id, null, null, "final");
+    // goal theo brief.finishMode: 'final' = chỉ xong khi video final tồn tại thật,
+    // 'draft' (mặc định) = xong khi có draft mới đã QC (agent.ts gate)
+    db.createChatSession(sessionId, `Duyệt: ${projectName}`, id, null, null, briefOf(meta).finishMode);
   }
+  // Prompt PHẢI khớp gate của phiên: phiên dùng lại giữ goal của nó ('draft' |
+  // 'final'); phiên không gate (goal null, vd chat của trình chỉnh sửa) theo brief
+  const session = db.getChatSession(sessionId);
+  const finishMode: FinishMode =
+    session?.goal === "draft" || session?.goal === "final" ? session.goal : briefOf(meta).finishMode;
+  const message = buildReviewPrompt({ id, projectName, notes: open, extraNotes, finishMode });
 
   // Đánh dấu đã gửi TRƯỚC khi chạy agent: lượt gửi lại sau đó không nhân đôi ghi chú cũ
   const sentAt = nowIso();

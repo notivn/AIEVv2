@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  alignKeepRangesToFrames,
   analyzeSilence,
   applyTrim,
   remapWordTimestamps,
@@ -335,30 +336,45 @@ export function mergeCutRanges(ranges: Array<{ start: number; end: number }>): S
 }
 
 /**
- * Lưới an toàn cuối cùng: bỏ mọi khoảng cắt chứa TRUNG ĐIỂM của một chữ.
+ * Lưới an toàn cuối cùng: bỏ mọi khoảng cắt chứa TRUNG ĐIỂM của một chữ mà
+ * không phủ trọn chữ đó (tức là cắt ngang chữ).
  *
- * `autoTrim.ts` có đúng lưới này (`guardMidpoints`) nhưng KHÔNG export nó, mà
- * file đó thì không được sửa - nên dựng lại y hệt ở đây. Bắt buộc phải có: ứng
+ * `autoTrim.ts` có lưới tương tự (`guardMidpoints`) cho khoảng lặng nhưng KHÔNG
+ * export nó, mà file đó thì không được sửa - nên dựng lại ở đây. Bắt buộc phải có: ứng
  * viên trong `cutCandidates` đến thẳng từ bước duyệt của người/AI, chưa hề đi
  * qua hàng rào chữ của analyzeSilence; duyệt nhầm một ứng viên đè lên chữ thật
  * mà không có lưới này thì lời nói bị nuốt.
  *
  * Lấy TRUNG ĐIỂM chứ không lấy hai mép: mép chữ do bộ bóc băng đoán, sai vài
  * chục ms là bình thường - loại theo mép sẽ gạt oan gần hết ứng viên hợp lệ.
+ *
+ * Chữ nằm TRỌN trong khoảng thì KHÔNG tính: đó chính là chữ người duyệt cố ý bỏ
+ * (từ đệm, lượt vấp, câu nói lại - ứng viên của deadWeight đều phủ đúng mép chữ).
+ * Bản cũ chặn mọi trung điểm nên gạt sạch mọi ứng viên trừ "hesitation" - đo
+ * trên transcript thật: 5/5 ứng viên vấp bị loại, approvedSec luôn bằng 0. Chỉ
+ * chặn khoảng CẮT NGANG một chữ: trung điểm nằm trong mà một mép thò ra ngoài.
  */
+const WORD_EDGE_TOLERANCE_SEC = 0.02; // ứng viên làm tròn 2 chữ số -> mép lệch tới 0,005s
+
 export function guardWordMidpoints(
   cuts: SilenceRange[],
   words: WordSpan[],
 ): { kept: SilenceRange[]; dropped: SilenceRange[] } {
   if (words.length === 0) return { kept: cuts, dropped: [] };
-  const mids = words
-    .filter((w) => Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start)
-    .map((w) => (w.start + w.end) / 2)
-    .sort((a, b) => a - b);
+  const spans = words.filter(
+    (w) => Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start,
+  );
   const kept: SilenceRange[] = [];
   const dropped: SilenceRange[] = [];
   for (const c of cuts) {
-    if (mids.some((m) => m >= c.start && m <= c.end)) dropped.push(c);
+    const splitsWord = spans.some((w) => {
+      const m = (w.start + w.end) / 2;
+      if (m < c.start || m > c.end) return false;
+      return (
+        w.start < c.start - WORD_EDGE_TOLERANCE_SEC || w.end > c.end + WORD_EDGE_TOLERANCE_SEC
+      );
+    });
+    if (splitsWord) dropped.push(c);
     else kept.push(c);
   }
   return { kept, dropped };
@@ -429,7 +445,9 @@ export async function runAutoTrim(ctx: JobCtx): Promise<void> {
   // ghi mức vào đó để nhìn hàng đợi là biết) -> brief của project.
   const level: TrimAggressiveness =
     req?.level ??
-    (ctx.job.sceneId && ctx.job.sceneId in TRIM_PROFILES
+    // Object.hasOwn chứ không `in`: sceneId "toString"/"constructor" (POST /api/jobs
+    // nhận chuỗi bất kỳ) `in` vẫn ra true qua prototype → profile undefined, job chết
+    (ctx.job.sceneId && Object.hasOwn(TRIM_PROFILES, ctx.job.sceneId)
       ? (ctx.job.sceneId as TrimAggressiveness)
       : brief.autoCutLevel);
   const sourceAbs = resolveTrimSource(projectId, req?.sourceRel ?? null);
@@ -500,17 +518,39 @@ export async function runAutoTrim(ctx: JobCtx): Promise<void> {
     );
   }
   ensureDir(path.dirname(outAbs));
+  const cutTranscriptAbs = path.join(projectDir, ...CUT_TRANSCRIPT_REL.split("/"));
   // Xóa bản cũ TRƯỚC khi cắt: applyTrim không tạo file khi không có gì để cắt,
   // còn sót bản cũ thì bước sau tưởng nhầm là vừa cắt xong.
   if (fs.existsSync(outAbs)) {
     fs.rmSync(outAbs, { force: true });
-    ctx.log(`[trim] Đã xóa bản cắt cũ ${toRepoRel(outAbs)} trước khi cắt lại.`);
+    // transcript.cut.json là mốc của ĐÚNG bản cắt vừa xóa. Để lại thì lượt này
+    // không cắt gì (hoặc hỏng giữa chừng) vẫn còn nó, mà readProjectTranscript
+    // ưu tiên bản .cut - phụ đề đem mốc của bản cắt cũ áp lên file gốc.
+    fs.rmSync(cutTranscriptAbs, { force: true });
+    ctx.log(`[trim] Đã xóa bản cắt cũ ${toRepoRel(outAbs)} (kèm transcript.cut.json) trước khi cắt lại.`);
   }
-  await applyTrim(sourceAbs, keepRanges, outAbs, {
+  // Mép đoạn giữ về khe giữa hai frame - CHÍNH danh sách này đi vào cả lệnh cắt
+  // lẫn bước dời mốc transcript bên dưới (xem alignKeepRangesToFrames)
+  const cutKeep = await alignKeepRangesToFrames(sourceAbs, keepRanges, {
     isCanceled: () => ctx.isCanceled(),
     onLog: (line) => ctx.log(line),
   });
-  if (ctx.isCanceled()) return;
+  try {
+    await applyTrim(sourceAbs, cutKeep, outAbs, {
+      isCanceled: () => ctx.isCanceled(),
+      onLog: (line) => ctx.log(line),
+    });
+  } catch (err) {
+    // ffmpeg hỏng hoặc bị hủy giữa chừng vẫn để lại file dở (mp4 thiếu moov) -
+    // bước sau thấy assets/<stem>.cut.mp4 là tưởng đã cắt xong
+    fs.rmSync(outAbs, { force: true });
+    throw err;
+  }
+  if (ctx.isCanceled()) {
+    // Cắt xong nhưng chưa kịp dời mốc transcript - bản cắt không có transcript khớp thì đừng để lại
+    fs.rmSync(outAbs, { force: true });
+    return;
+  }
   const cut = fs.existsSync(outAbs);
   if (!cut) {
     ctx.log(
@@ -525,8 +565,8 @@ export async function runAutoTrim(ctx: JobCtx): Promise<void> {
   let cutTranscriptRel: string | null = null;
   let cutWords: WordSpan[] = words;
   if (src && cut) {
-    const remapped = remapWordTimestamps(src.json, keepRanges);
-    const cutAbs = path.join(projectDir, ...CUT_TRANSCRIPT_REL.split("/"));
+    const remapped = remapWordTimestamps(src.json, cutKeep);
+    const cutAbs = cutTranscriptAbs;
     ensureDir(path.dirname(cutAbs));
     fs.writeFileSync(cutAbs, JSON.stringify(remapped, null, 2) + "\n", "utf8");
     cutTranscriptRel = toRepoRel(cutAbs);

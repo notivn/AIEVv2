@@ -96,6 +96,9 @@ const upload = multer({
       cb(null, `tvd-${Date.now()}-${Math.round(Math.random() * 1e9)}`),
   }),
   limits: { fileSize: 4 * 1024 * 1024 * 1024 },
+  // Tên file gốc thành tên phiên (autoNamed) - multer mặc định giải mã latin1 nên
+  // "Phỏng vấn.mp4" ra "PhÃ¡»ng váº¥n"; trình duyệt gửi UTF-8 thô
+  defParamCharset: "utf8",
 });
 
 /** Đuôi video nhận được - đúng bộ mà fileKind() coi là "video" */
@@ -120,7 +123,7 @@ function uniqueId(name: string): string {
 
 /** Chặn chạy chồng job trên cùng một phiên (queue chạy song song nhiều job) */
 function assertNotBusy(meta: TranslateVideoMeta): void {
-  if (db.hasActiveJobForProject(meta.id)) {
+  if (db.hasActiveJobForProject(meta.id, "translate-video")) {
     throw new HttpError(
       409,
       "BUSY",
@@ -313,6 +316,8 @@ router.patch("/:id", (req, res) => {
     patch.sourceLang = next;
     if (next !== cur.sourceLang && cur.transcriptFile) {
       patch.transcriptFile = null;
+      // Không còn transcript thì cũng không còn "transcript đang có là của ai"
+      patch.transcriptInfo = null;
       patch.cues = [];
       patch.outputFile = null;
       patch.status = "draft";
@@ -396,6 +401,15 @@ router.patch("/:id", (req, res) => {
     patch.outputFile = null;
   }
 
+  // Video thành phẩm vừa bị gỡ (sửa câu, đổi cấu hình lồng tiếng...) mà trạng thái
+  // còn "done" thì trang báo Xong, bước cuối tích xanh, mà không có video nào để
+  // xem. Lùi về trạng thái đứng yên - trang tự suy đúng bước từ dữ liệu còn lại.
+  if (patch.outputFile === null && (patch.status ?? cur.status) === "done") {
+    const cues = patch.cues ?? cur.cues;
+    const transcript = "transcriptFile" in patch ? patch.transcriptFile : cur.transcriptFile;
+    patch.status = cues.length > 0 ? "translated" : transcript ? "transcribed" : "draft";
+  }
+
   const saved = patchTranslateVideo(cur.id, patch);
 
   // Nhớ "gu làm việc" cho phiên sau. Đặt SAU khi ghi thành công: lựa chọn bị
@@ -457,6 +471,23 @@ router.post("/:id/source", upload.single("file"), async (req, res) => {
       );
     }
 
+    // Đo file tạm TRƯỚC khi đụng vào nguồn cũ: đo sau khi đã xóa thì một file
+    // hỏng làm mất luôn video đang dùng, mà meta vẫn trỏ vào file đã bị xóa.
+    // ffprobe nhận dạng theo NỘI DUNG nên file tạm không đuôi vẫn đo được.
+    // probeVideo ném Error trần (không có mã) - không bọc thì file hỏng ra 500
+    // "Lỗi máy chủ nội bộ" thay vì 400 PROBE_FAILED nói rõ là file hỏng.
+    const probe = await probeVideo(uploaded.path).catch((err: unknown) => {
+      throw new HttpError(
+        400,
+        "PROBE_FAILED",
+        `ffprobe không đọc được "${uploaded.originalname}" - file hỏng hoặc không phải video. ` +
+          `Chi tiết: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    if (!(probe.durationSec > 0)) {
+      throw new HttpError(400, "PROBE_FAILED", "ffprobe không đọc được thời lượng video");
+    }
+
     const dir = translateVideoDirOf(meta.id);
     ensureDir(dir);
     // Đổi nguồn = xóa nguồn cũ: tên file luôn là "source.<ext>" nên đuôi khác
@@ -467,11 +498,6 @@ router.post("/:id/source", upload.single("file"), async (req, res) => {
     const destAbs = path.join(dir, `source${ext}`);
     moveFile(uploaded.path, destAbs);
 
-    const probe = await probeVideo(destAbs);
-    if (!(probe.durationSec > 0)) {
-      throw new HttpError(400, "PROBE_FAILED", "ffprobe không đọc được thời lượng video");
-    }
-
     const patch: Partial<TranslateVideoMeta> = {
       source: {
         relPath: toRepoRel(destAbs),
@@ -480,9 +506,13 @@ router.post("/:id/source", upload.single("file"), async (req, res) => {
         height: probe.height,
         fps: Math.round(probe.fps * 1000) / 1000,
       },
-      // Nguồn mới thì mọi thứ dẫn xuất từ nguồn cũ đều hết giá trị
+      // Nguồn mới thì mọi thứ dẫn xuất từ nguồn cũ đều hết giá trị - kể cả
+      // transcriptInfo (UI vẫn báo "đã bóc bằng X") và dubInfo (cao độ F0 đo
+      // trên tiếng của video CŨ sẽ bị dùng lại để gán giọng cho video mới)
       transcriptFile: null,
+      transcriptInfo: null,
       cues: [],
+      dubInfo: null,
       outputFile: null,
       status: "draft",
       error: null,
@@ -504,8 +534,11 @@ router.post("/:id/source", upload.single("file"), async (req, res) => {
         patch.autoNamed = false;
       }
     }
-    // Transcript cũ trỏ tới video khác - xóa để không bị dùng nhầm
+    // Transcript cũ trỏ tới video khác - xóa để không bị dùng nhầm. Thư mục
+    // dub/ cũng vậy: audio 16 kHz còn sót lại từ lần đo F0 bị hủy sẽ được đo lại
+    // như thể là tiếng của video mới (xem measureSpeakerF0)
     fs.rmSync(transcriptPathOf(meta.id), { force: true });
+    fs.rmSync(dubDirOf(meta.id), { recursive: true, force: true });
 
     res.json(patchTranslateVideo(meta.id, patch));
   } catch (err) {
@@ -601,7 +634,12 @@ router.post("/:id/translate", async (req, res) => {
       usageTag: "translate-video",
       projectId: meta.id,
     });
-    const cues = normCues(result.cues);
+    // translateCues chỉ trả start/end/text/original - nhãn người nói phải gắn lại
+    // từ câu gốc (cùng thứ tự, cùng số câu). Thiếu bước này thì mọi phiên đã phân
+    // vai sau khi dịch đều mất nhãn, và lồng tiếng đọc CẢ video bằng một giọng.
+    const cues = normCues(
+      result.cues.map((c, i) => (input[i]?.speaker ? { ...c, speaker: input[i].speaker } : c)),
+    );
     if (cues.length === 0) {
       throw new HttpError(
         502,

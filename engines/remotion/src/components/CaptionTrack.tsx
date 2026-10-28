@@ -8,6 +8,7 @@ import {
 } from "remotion";
 import type { CaptionCue, CaptionWord } from "../manifest";
 import { useMediaSrc } from "../media";
+import { cueBoxAttrs, cueOffsetCss, cueScaleOf } from "./cueTransform";
 import { fadeInOut } from "./fade";
 import {
   useVietnameseFont,
@@ -80,7 +81,7 @@ const Word: React.FC<{ word: CaptionWord; frame: number }> = ({
   );
 };
 
-const Cue: React.FC<{ cue: CaptionCue }> = ({ cue }) => {
+const Cue: React.FC<{ cue: CaptionCue; index: number }> = ({ cue, index }) => {
   const frame = useCurrentFrame(); // 0 tại cue.from (đang trong <Sequence>)
   const { width, height } = useVideoConfig();
   const absFrame = frame + cue.from;
@@ -114,8 +115,9 @@ const Cue: React.FC<{ cue: CaptionCue }> = ({ cue }) => {
       }}
     >
       <div
+        {...cueBoxAttrs("caption", index)}
         style={{
-          transform: `translateY(${y}px)`,
+          transform: `${cueOffsetCss(cue.transform, width, height)}translateY(${y}px) scale(${cueScaleOf(cue.transform)})`,
           // Glass theo brand: viền bằng box-shadow inset, KHÔNG border 1px cứng.
           background: "rgba(10,16,32,0.52)",
           backdropFilter: "blur(20px)",
@@ -159,7 +161,7 @@ export const CaptionTrack: React.FC<{ captions: CaptionCue[] }> = ({
           from={cue.from}
           durationInFrames={cue.durationInFrames}
         >
-          <Cue cue={cue} />
+          <Cue cue={cue} index={index} />
         </Sequence>
       ))}
     </>

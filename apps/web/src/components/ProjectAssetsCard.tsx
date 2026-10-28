@@ -44,7 +44,8 @@ import {
   type GradeAdjust,
   type GradePreviewResult,
 } from "@/lib/api";
-import { useUploadEvents } from "@/lib/useEvents";
+import { gradeAdjustCss } from "@engine/color";
+import { useEvents, useUploadEvents } from "@/lib/useEvents";
 import { Card } from "@/components/Card";
 import { Badge } from "@/components/Badge";
 import { Banner } from "@/components/Banner";
@@ -266,6 +267,14 @@ export function ProjectAssetsCard({
       [e.id]: { received: e.received ?? 0, total: e.total ?? 0 },
     }));
   });
+  // SSE đứt rồi nối lại: event done/lỗi của upload đang dở có thể đã lỡ mất
+  // (server khởi động lại giữa chừng thì upload chết mà không ai báo) - không dọn
+  // là thanh "Đang nhận…" đứng mãi. Upload còn sống thật sẽ hiện lại ngay ở
+  // event tiến trình kế tiếp (~400ms).
+  const { resyncTick } = useEvents();
+  useEffect(() => {
+    if (resyncTick > 0) setIncoming({});
+  }, [resyncTick]);
 
   // Asset đang mở modal preview lớn (ảnh/video/audio)
   const [previewFile, setPreviewFile] = useState<FileInfo | null>(null);
@@ -348,13 +357,20 @@ export function ProjectAssetsCard({
       if (files.length === 0) return;
       setUploading(true);
       setError(null);
+      // Một file hỏng (vd .heic của iPhone bị từ chối) không được chặn các file
+      // sau: trước đây vòng lặp dừng ở file lỗi, các file còn lại lặng lẽ không
+      // được tải lên mà banner chỉ nhắc đúng một file.
+      const errors: string[] = [];
       try {
         for (const f of files) {
-          await uploadAsset(f, "project", projectId);
+          try {
+            await uploadAsset(f, "project", projectId);
+          } catch (e) {
+            errors.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
         onChanged();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (errors.length > 0) setError(errors.join(" · "));
       } finally {
         setUploading(false);
       }
@@ -949,25 +965,10 @@ const ADJUST_SLIDERS: {
 /**
  * CSS filter XẤP XỈ thông số chỉnh tay - áp tức thì lên ảnh preview cho cảm
  * giác realtime khi kéo slider; ảnh CHÍNH XÁC từ grade-frame sẽ thay thế sau.
- * Gamma/nhiệt độ màu chỉ gần đúng (CSS không có filter tương ứng 1:1).
+ * Nguồn duy nhất ở engine (`gradeAdjustCss`) - chỉnh màu trên timeline dùng lại
+ * đúng xấp xỉ này cho 14 preset.
  */
-function cssApprox(a: GradeAdjust): string | undefined {
-  const f: string[] = [];
-  // eq brightness của FFmpeg là cộng (-1..1) → xấp xỉ bằng brightness nhân của CSS
-  if (a.brightness !== 0) f.push(`brightness(${(1 + a.brightness).toFixed(3)})`);
-  if (a.contrast !== 1) f.push(`contrast(${a.contrast.toFixed(3)})`);
-  // vibrance gộp tương đối vào saturate
-  const sat = a.saturation * (1 + a.vibrance * 0.6);
-  if (sat !== 1) f.push(`saturate(${Math.max(0, sat).toFixed(3)})`);
-  // gamma > 1 sáng vùng mid → xấp xỉ nhẹ bằng brightness
-  if (a.gamma !== 1) f.push(`brightness(${(1 + (a.gamma - 1) * 0.5).toFixed(3)})`);
-  if (a.temperature !== 6500) {
-    const k = (6500 - a.temperature) / 2500; // >0 = ấm hơn, <0 = lạnh hơn
-    if (k > 0) f.push(`sepia(${Math.min(0.45, k * 0.45).toFixed(3)})`);
-    else f.push(`hue-rotate(${(Math.max(-1.2, k) * -10).toFixed(1)}deg)`);
-  }
-  return f.length ? f.join(" ") : undefined;
-}
+const cssApprox = (a: GradeAdjust): string | undefined => gradeAdjustCss(a);
 
 /**
  * Modal duyệt chỉnh màu cho một asset video - bố cục 2 khung:

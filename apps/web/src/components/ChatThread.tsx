@@ -183,6 +183,7 @@ export function ChatThread({
   send,
   emptyText,
   sendDisabled = false,
+  queued = null,
 }: {
   sessionId: string | null;
   projectId?: string;
@@ -215,6 +216,12 @@ export function ChatThread({
    * lý do + đường sửa bên cạnh; ô nhập vẫn gõ được để soạn sẵn.
    */
   sendDisabled?: boolean;
+  /**
+   * Tin nhắn trang đẩy vào để gửi NGAY (vd "Nhờ AI" từ timeline của trình chỉnh
+   * sửa). Mỗi `id` mới gửi đúng một lần qua cùng đường với nút Gửi; đang có lượt
+   * chạy / bị chặn gửi thì chữ vào ô nhập để người dùng gửi sau.
+   */
+  queued?: { id: number; text: string } | null;
 }) {
   const { t, tf } = useT();
   const [messages, setMessages] = useState<UiMessage[]>([]);
@@ -271,6 +278,10 @@ export function ChatThread({
   const activeIdRef = useRef<string | null | undefined>(undefined);
   const streamRef = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Người dùng đang đứng ở đáy khung hội thoại không. Kéo lên đọc lại tin cũ thì
+  // thôi tự cuộn: text stream về từng mẩu nhiều lần mỗi giây, cuộn vô điều kiện
+  // là cứ giật về đáy, cả phiên edit dài không đọc lại được gì.
+  const stickRef = useRef(true);
 
   /** Chốt phần text đang stream thành một bong bóng assistant. */
   const flushStream = useCallback(() => {
@@ -289,6 +300,7 @@ export function ChatThread({
   useEffect(() => {
     if (sessionId === activeIdRef.current) return;
     activeIdRef.current = sessionId;
+    stickRef.current = true;
     streamRef.current = "";
     setStreamText("");
     setMessages([]);
@@ -476,16 +488,33 @@ export function ChatThread({
     }
   });
 
-  // Auto-scroll (cả khi khối kết thúc phiên xuất hiện)
+  // Auto-scroll (cả khi khối kết thúc phiên xuất hiện) - chỉ khi đang ở đáy
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, streamText, status]);
 
-  async function onSend() {
-    const message = input.trim();
+  // Tin nhắn trang đẩy vào - gửi một lần mỗi id (onSend mới nhất qua ref)
+  const onSendRef = useRef<(override?: string) => Promise<void>>(async () => {});
+  onSendRef.current = onSend;
+  const takenQueuedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!queued || takenQueuedRef.current === queued.id) return;
+    takenQueuedRef.current = queued.id;
+    if (running || sendDisabled) {
+      setInput((cur) => (cur.trim() ? `${cur}
+${queued.text}` : queued.text));
+      return;
+    }
+    void onSendRef.current(queued.text);
+  }, [queued, running, sendDisabled]);
+
+  async function onSend(override?: string) {
+    const message = (override ?? input).trim();
     if (!message || running || sendDisabled) return;
-    setInput("");
+    if (override === undefined) setInput("");
+    // Vừa gửi thì người dùng muốn thấy tin của mình - quay về bám đáy
+    stickRef.current = true;
     setAgentError(null);
     setMessages((m) => [...m, { role: "user", kind: "text", content: message }]);
     setSteps(0);
@@ -517,7 +546,7 @@ export function ChatThread({
     } catch (e) {
       // Gửi thất bại: gỡ bubble optimistic + trả lại nội dung vào ô nhập (không mất chữ đã gõ)
       setMessages((m) => m.slice(0, -1));
-      setInput(message);
+      setInput((cur) => (override === undefined ? message : cur || message));
       setRunning(false);
       setStatus(null);
       setAgentError(e instanceof Error ? e.message : String(e));
@@ -672,6 +701,10 @@ export function ChatThread({
 
       <div
         ref={scrollRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        }}
         className={`flex min-h-0 flex-1 flex-col overflow-y-auto ${
           compact ? "gap-2 p-3" : "gap-3 p-4"
         }`}
@@ -759,7 +792,7 @@ export function ChatThread({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              onSend();
+              void onSend();
             }
           }}
         />
@@ -769,7 +802,7 @@ export function ChatThread({
             {t("chat.stop")}
           </Button>
         ) : (
-          <Button small={compact} onClick={onSend} disabled={!input.trim() || sendDisabled}>
+          <Button small={compact} onClick={() => void onSend()} disabled={!input.trim() || sendDisabled}>
             <Send size={14} strokeWidth={2} />
             {t("chat.send")}
           </Button>

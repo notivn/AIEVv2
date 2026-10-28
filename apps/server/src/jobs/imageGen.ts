@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { paths, repoRoot } from "../config.js";
 import { updateJob } from "../db.js";
-import { geminiApiKey, generateBackground } from "../gemini.js";
+import { generateImage } from "../imageProviders/index.js";
 import {
   IMAGE_GEN_STEPS,
   imageDirOf,
@@ -18,7 +18,8 @@ import { parseProgressLine, shortenStep } from "./progress.js";
 
 /**
  * Job "image-gen" - pipeline tạo ảnh của image project (docs/API.md mục Image Projects):
- * - step "background": gọi Gemini tạo ảnh nền (prompt trộn Design System) → background.png
+ * - step "background": gọi nhà cung cấp tạo ảnh (imageProviders - Gemini API / ChatGPT
+ *   web / Gemini web, prompt trộn Design System) → background.png đúng kích thước tỉ lệ
  * - step "compose": stage nền + logo bằng hardlink vào engines/remotion/public/staging/img-<id>/,
  *   ghi props.json (PosterProps), chạy `npx remotion still Poster` → final.png
  * - step "all": background rồi compose.
@@ -61,27 +62,65 @@ export async function runImageGen(ctx: JobCtx): Promise<void> {
 
 // ---- step background: Gemini tạo ảnh nền -------------------------------
 
-async function stepBackground(ctx: JobCtx, id: string): Promise<void> {
-  if (!geminiApiKey()) {
-    throw new Error(
-      "Chưa có GEMINI_API_KEY. Thêm GEMINI_API_KEY vào .env - lấy tại aistudio.google.com/apikey; hoặc tự upload nền rồi chạy bước Hoàn thiện.",
-    );
+/**
+ * Chờ `p` nhưng thoát ngay (ném "Job đã bị hủy") khi job bị hủy. Bước tạo ảnh
+ * không có tiến trình con nào để queue kill: không có vòng dò này thì job hủy
+ * vẫn chiếm chỗ trong hàng đợi tới khi nhà cung cấp trả ảnh (cả phút với gateway web).
+ */
+async function orCanceled<T>(p: Promise<T>, ctx: JobCtx): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const canceled = new Promise<never>((_, reject) => {
+    timer = setInterval(() => {
+      if (ctx.isCanceled()) reject(new Error("Job đã bị hủy"));
+    }, 500);
+  });
+  try {
+    return await Promise.race([p, canceled]);
+  } finally {
+    clearInterval(timer);
   }
+}
+
+async function stepBackground(ctx: JobCtx, id: string): Promise<void> {
   const meta = readImageMeta(id);
   const design = getStyle(meta.styleId); // style đã chọn hoặc default
 
-  ctx.progress(5, "Gemini tạo ảnh nền");
-  ctx.log(`[gemini] kind=${meta.kind} aspect=${meta.aspect}`);
-  const { promptUsed } = await generateBackground({
+  // meta.model: id model Gemini API (giá trị cũ) hoặc "auto" | "chatgpt-web" |
+  // "gemini-web" | "gemini-api" - imageProviders/resolveProviders lo tương thích
+  ctx.progress(5, "AI tạo ảnh nền");
+  ctx.log(`[image] kind=${meta.kind} aspect=${meta.aspect} model=${meta.model ?? "(mặc định)"}`);
+  // Vẽ vào file TẠM của riêng job này rồi mới đổi tên: hủy job không cắt ngang
+  // được lượt đang vẽ ở nhà cung cấp, và ảnh về muộn mà ghi thẳng background.png
+  // là đè lên nền người dùng vừa tải lên / vừa tạo lại sau khi hủy.
+  const bgAbs = path.join(imageDirOf(id), "background.png");
+  const tmpAbs = path.join(imageDirOf(id), `background.${ctx.job.id}.tmp.png`);
+  const generation = generateImage({
     prompt: meta.prompt,
     kind: meta.kind,
     aspect: meta.aspect,
     design,
-    outFile: path.join(imageDirOf(id), "background.png"),
+    outFile: tmpAbs,
     usageProjectId: id,
     model: meta.model ?? undefined,
+    onLog: (l) => ctx.log(l),
+    isCanceled: () => ctx.isCanceled(),
   });
-  ctx.log(`[gemini] prompt: ${promptUsed}`);
+  let result: Awaited<typeof generation>;
+  try {
+    result = await orCanceled(generation, ctx);
+  } catch (err) {
+    // Hủy giữa chừng: lượt vẽ vẫn chạy nền tới khi xong - lúc đó dọn file tạm của nó
+    void generation
+      .catch(() => undefined)
+      .finally(() => fs.rmSync(tmpAbs, { force: true }));
+    throw err;
+  }
+  if (ctx.isCanceled()) {
+    fs.rmSync(tmpAbs, { force: true });
+    throw new Error("Job đã bị hủy");
+  }
+  fs.renameSync(tmpAbs, bgAbs);
+  ctx.log(`[image] provider=${result.provider} prompt: ${result.promptUsed}`);
 
   const fresh = readImageMeta(id);
   fresh.background = "background.png";

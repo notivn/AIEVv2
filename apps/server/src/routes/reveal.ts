@@ -71,8 +71,12 @@ router.post("/", (req: Request, res: Response) => {
   if (process.platform === "win32") {
     // Explorer cần "/select," DÍNH LIỀN đường dẫn trong cùng một argument -
     // tách "/select," và path thành 2 arg thì Explorer không select đúng file.
+    // Đường dẫn phải nằm trong ngoặc kép: Explorer tách tham số theo dấu PHẨY,
+    // tên file kiểu "a,b.bat" bị cắt làm hai và phần sau thành tham số khác của
+    // Explorer. Tên file Windows không chứa được `"`, nên bọc tay
+    // + windowsVerbatimArguments (Node không tự thoát lại dấu ngoặc) là an toàn.
     cmd = "explorer.exe";
-    args = [`/select,${abs}`];
+    args = [`/select,"${abs}"`];
   } else if (process.platform === "darwin") {
     cmd = "open";
     args = ["-R", abs];
@@ -81,7 +85,11 @@ router.post("/", (req: Request, res: Response) => {
     cmd = "xdg-open";
     args = [path.dirname(abs)];
   }
-  const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+  const child = spawn(cmd, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsVerbatimArguments: process.platform === "win32",
+  });
   child.on("error", () => {
     /* thiếu lệnh trên máy - không làm rơi server, người dùng vẫn nhận 204 */
   });

@@ -92,6 +92,21 @@ export function defaultStyle(): StyleDesign {
   };
 }
 
+export const LOGO_EXTS = new Set([".png", ".jpg", ".jpeg", ".svg", ".webp"]);
+export const FONT_EXTS = new Set([".ttf", ".otf", ".woff", ".woff2"]);
+
+/**
+ * logoPath/fontFiles là đường dẫn TỪ REPO ROOT mà server sẽ chép file đó vào
+ * project (syncBrandLogo), stage cho Remotion, phát qua /media. Không chặn thì
+ * `"../../.ssh/id_rsa"` hay `".env"` thành "logo" và bị chép ra chỗ đọc được.
+ * Chỉ nhận file nằm dưới assets/, không `..`, không file/thư mục ẩn, đúng đuôi.
+ */
+export function isStyleFileRel(rel: string, exts: ReadonlySet<string>): boolean {
+  if (!/^assets\/[A-Za-z0-9._\/-]+$/.test(rel)) return false;
+  if (rel.split("/").some((seg) => !seg || seg.startsWith("."))) return false;
+  return exts.has(path.posix.extname(rel).toLowerCase());
+}
+
 /** Chuẩn hóa tags: string, trim, bỏ rỗng, dedupe */
 export function normStyleTags(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
@@ -127,15 +142,22 @@ function normStyle(raw: unknown): StyleDesign | null {
   }
   if (s.fontFiles && typeof s.fontFiles === "object" && !Array.isArray(s.fontFiles)) {
     const ff = s.fontFiles as Record<string, unknown>;
-    if (typeof ff.heading === "string" && ff.heading) base.fontFiles.heading = ff.heading;
-    if (typeof ff.body === "string" && ff.body) base.fontFiles.body = ff.body;
+    // Đường dẫn lạ (sửa tay, AI ghi bậy) → coi như chưa có file, không chép/stage bừa
+    if (typeof ff.heading === "string" && isStyleFileRel(ff.heading, FONT_EXTS)) {
+      base.fontFiles.heading = ff.heading;
+    }
+    if (typeof ff.body === "string" && isStyleFileRel(ff.body, FONT_EXTS)) {
+      base.fontFiles.body = ff.body;
+    }
   }
   if (s.effects && typeof s.effects === "object" && !Array.isArray(s.effects)) {
     const e = s.effects as Record<string, unknown>;
     if (typeof e.gradient === "boolean") base.effects.gradient = e.gradient;
     if (typeof e.liquidGlass === "boolean") base.effects.liquidGlass = e.liquidGlass;
   }
-  if (typeof s.logoPath === "string" && s.logoPath) base.logoPath = s.logoPath;
+  if (typeof s.logoPath === "string" && isStyleFileRel(s.logoPath, LOGO_EXTS)) {
+    base.logoPath = s.logoPath;
+  }
   if (typeof s.tone === "string") base.tone = s.tone;
   if (typeof s.guidelines === "string") base.guidelines = s.guidelines;
   if (typeof s.createdAt === "string" && s.createdAt) base.createdAt = s.createdAt;

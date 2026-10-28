@@ -37,6 +37,7 @@ import {
   type Ref,
 } from "react";
 import { Assemble } from "@engine/Assemble";
+import { rawSceneDurationFrames } from "@engine/duration";
 import {
   manifestSchema,
   resolveSceneDurationInFrames,
@@ -117,19 +118,12 @@ export type PreviewBuild =
     }
   | { ok: false; issues: PreviewIssue[] };
 
-/** Thời lượng frame như jobs/assemble.ts `frameOf` - null = chưa suy ra được. */
-const sceneFrames = (scene: EditorScene, fps: number): number | null => {
-  if (typeof scene.durationInFrames === "number") return scene.durationInFrames;
-  if (
-    typeof scene.srcVideo === "string" &&
-    scene.srcVideo &&
-    typeof scene.from === "number" &&
-    typeof scene.to === "number"
-  ) {
-    return Math.max(1, Math.round(scene.to * fps) - Math.round(scene.from * fps));
-  }
-  return null;
-};
+/**
+ * Thời lượng frame như jobs/assemble.ts `frameOf` (tính cả `speed`) - helper
+ * dùng chung của engine. null = chưa suy ra được.
+ */
+const sceneFrames = (scene: EditorScene, fps: number): number | null =>
+  rawSceneDurationFrames(scene, fps);
 
 /**
  * Dựng manifest cho Assemble từ dữ liệu GET /timeline, theo đúng các bước
@@ -137,7 +131,10 @@ const sceneFrames = (scene: EditorScene, fps: number): number | null => {
  * - scene HyperFrames (`src`): `render` := preview.sceneRenders[id]; chưa
  *   render thì bỏ `render` → SceneClip hiện placeholder sẵn có;
  * - scene footage/ảnh còn sót `render` cũ: bỏ (footage thắng);
- * - kẹp `transitionOverlap` về min(scene này, scene kế);
+ * - kẹp `transitionOverlap` về min(scene này, scene kế) - độ dài scene tính cả
+ *   `speed` (rawSceneDurationFrames, cùng helper với engine/server);
+ * - layer ảnh/video: `mediaAspect` := tỉ lệ file trong preview.media; sfx có
+ *   fade ra: `mediaDurationSec` := độ dài file (assemble đo bằng ffprobe);
  * - watermark := preview.watermark.
  * Không bao giờ ném lỗi: sai schema → `{ ok: false, issues }`.
  * Khóa top-level `null` (captions/subtitles/overlays/subtitleStyle/audio - meta
@@ -208,9 +205,36 @@ export function buildPreviewManifest({
   const audio = {
     ...audioIn,
     voice: gone(audioIn.voice) ? null : audioIn.voice,
-    sfx: Array.isArray(audioIn.sfx) ? audioIn.sfx.filter((x) => !gone(x?.file)) : audioIn.sfx,
+    sfx: Array.isArray(audioIn.sfx)
+      ? audioIn.sfx
+          .filter((x) => !gone(x?.file))
+          // Fade ra tính từ CUỐI file: điền độ dài đo được như jobs/assemble.ts
+          .map((x) => {
+            const dur = x && typeof x.fadeOutSec === "number" && x.fadeOutSec > 0
+              ? preview.media?.[x.file]?.durationSec
+              : null;
+            return dur ? { ...x, mediaDurationSec: dur } : x;
+          })
+      : audioIn.sfx,
     music: audioIn.music && gone(audioIn.music.file) ? null : audioIn.music,
   };
+
+  // Layer chồng: như jobs/assemble.ts - điền `mediaAspect` (tỉ lệ thật của file,
+  // từ preview.media) để hộp layer khớp bản render. File thiếu → bỏ `src`: hộp
+  // vẫn chiếm chỗ nhưng trống, không làm sập trình phát.
+  const layers = (Array.isArray(timeline.layers) ? timeline.layers : []).map((original) => {
+    if (!original || typeof original !== "object") return original;
+    const layer = { ...original };
+    if (typeof layer.src === "string" && layer.src) {
+      if (gone(layer.src)) {
+        delete layer.src;
+      } else {
+        const info = preview.media?.[layer.src];
+        if (info?.width && info.height) layer.mediaAspect = info.width / info.height;
+      }
+    }
+    return layer;
+  });
   const raw = {
     id: project.id,
     name: project.name,
@@ -230,6 +254,7 @@ export function buildPreviewManifest({
     // schema chỉ nhận object hoặc thiếu hẳn - null nghĩa là "mặc định"
     ...(timeline.subtitleStyle ? { subtitleStyle: timeline.subtitleStyle } : {}),
     overlays: timeline.overlays ?? [],
+    layers,
     watermark: preview.watermark && !gone(preview.watermark.file) ? preview.watermark : null,
   };
 

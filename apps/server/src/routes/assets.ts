@@ -29,6 +29,10 @@ const upload = multer({
     filename: (_req, _file, cb) => cb(null, `up-${Date.now()}-${Math.round(Math.random() * 1e9)}`),
   }),
   limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // footage có thể lớn
+  // Trình duyệt gửi tên file multipart bằng UTF-8 thô; multer mặc định giải mã
+  // latin1 nên "Giọng đọc.mp3" ra mojibake và sanitizeFileName cắt thành
+  // "gi-ng-a-c.mp3" thay vì "giong-doc.mp3"
+  defParamCharset: "utf8",
 });
 
 function qs(value: unknown): string {
@@ -252,7 +256,10 @@ router.post("/", uploadProgress, upload.single("file"), (req, res) => {
     }
     let finalName = safeName;
     const base = path.basename(safeName, ext);
-    for (let n = 2; fs.existsSync(path.join(dir, finalName)); n++) {
+    // assets.json của project là file metadata (mô tả/preset màu đưa vào prompt AI) -
+    // upload trùng tên khi nó chưa tồn tại không được chiếm chỗ của nó
+    const reserved = (name: string): boolean => scope === "project" && name === "assets.json";
+    for (let n = 2; reserved(finalName) || fs.existsSync(path.join(dir, finalName)); n++) {
       finalName = `${base}-${n}${ext}`;
     }
 

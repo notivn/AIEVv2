@@ -40,6 +40,23 @@ const NPM = IS_WIN ? "npm.cmd" : "npm";
 export const MIN_NODE_MAJOR = 22;
 
 /**
+ * Bản vá bảo mật tối thiểu theo từng dòng Node (đợt 21/10/2026: Brotli RCE
+ * CVE-2026-111497, vượt kiểm tra hostname TLS...) - phải khớp `engines` trong
+ * package.json. Dòng không có ở đây (23, 25 - hết hỗ trợ) coi như chưa vá.
+ * Có đợt vá mới thì nâng số ở đây và ở `engines` cùng lúc.
+ */
+const NODE_SECURITY_FLOOR = { 22: "22.23.4", 24: "24.22.1", 26: "26.12.1" };
+
+function nodePatched(version) {
+  const v = version.split(".").map(Number);
+  const floor = NODE_SECURITY_FLOOR[v[0]] ?? (v[0] > 26 ? "0.0.0" : null);
+  if (!floor) return false;
+  const f = floor.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (v[i] !== f[i]) return v[i] > f[i];
+  return true;
+}
+
+/**
  * MỌI THỨ NẶNG DO DỰ ÁN TỰ TẢI VỀ ĐỀU NẰM TRONG .runtime/ CỦA CHÍNH DỰ ÁN.
  *
  * Trước đây chúng rơi hết vào ổ hệ thống dù repo nằm ở ổ khác: model whisper
@@ -64,6 +81,24 @@ export const RUNTIME_DIRS = {
 const VENV_BIN = path.join(RUNTIME_DIRS.venv, IS_WIN ? "Scripts" : "bin");
 const VENV_PY = path.join(VENV_BIN, IS_WIN ? "python.exe" : "python");
 const VENV_PIP = path.join(VENV_BIN, IS_WIN ? "pip.exe" : "pip");
+
+/**
+ * Venv RIÊNG của gateway tạo ảnh (gateways/chatgpt + gateways/gemini-web), tách
+ * khỏi .runtime/venv: chatgpt2api đòi Python >= 3.13 và kéo fastapi/pydantic
+ * bản riêng, còn venv chính mang torch/vieneu - trộn chung là một lần nâng gói
+ * bên này làm hỏng bên kia. Backend đọc đúng đường dẫn này
+ * (apps/server/src/imageProviders/runtime.ts) - đổi ở đây là phải đổi cả bên đó.
+ * CỐ Ý không nằm trong RUNTIME_DIRS: ensureRuntimeDirs() mkdir mọi thứ trong đó,
+ * mà venv phải do `python -m venv` dựng.
+ */
+const GW_VENV = path.join(RUNTIME, "venv-gateway");
+const GW_VENV_BIN = path.join(GW_VENV, IS_WIN ? "Scripts" : "bin");
+const GW_VENV_PY = path.join(GW_VENV_BIN, IS_WIN ? "python.exe" : "python");
+const GW_REQUIREMENTS = path.join(ROOT, "gateways", "requirements.txt");
+/** chatgpt2api: requires-python >= 3.13 (gateways/chatgpt/pyproject.toml) */
+const GW_MIN_PY = [3, 13];
+/** Module phải import được trong venv gateway - khớp gateways/requirements.txt */
+const GW_MODULES = ["fastapi", "uvicorn", "curl_cffi", "sqlalchemy", "tiktoken", "PIL", "pybase64", "multipart", "gemini_webapi"];
 
 function ensureRuntimeDirs() {
   for (const dir of Object.values(RUNTIME_DIRS)) fs.mkdirSync(dir, { recursive: true });
@@ -302,6 +337,60 @@ function pyHasModule(exe, mod, timeout) {
   return run(exe, ["-c", `import ${mod}`], timeout, runtimeEnv()).ok;
 }
 
+const PY_VERSION_SNIPPET = "import sys; print('%d.%d.%d' % sys.version_info[:3])";
+
+function versionAtLeast(version, min) {
+  const [a, b] = String(version).split(".").map(Number);
+  return a > min[0] || (a === min[0] && b >= min[1]);
+}
+
+/**
+ * Python hệ thống có version >= min (để dựng venv gateway). Khác findPython():
+ * `py` trên Windows mặc định là bản mới nhất nhưng máy có thể có cả 3.11 làm
+ * mặc định - nên hỏi thẳng launcher theo từng version trước.
+ * Trả { exe, args, version, label } - args là tiền tố (vd ["-3.14"]).
+ */
+function findPythonAtLeast(min) {
+  const cands = IS_WIN
+    ? [["py", ["-3.14"]], ["py", ["-3.13"]], ["py", []], ["python", []], ["python3", []]]
+    : [["python3.14", []], ["python3.13", []], ["python3", []], ["python", []]];
+  for (const [exe, args] of cands) {
+    const r = run(exe, [...args, "-c", PY_VERSION_SNIPPET], 8000);
+    if (!r.ok || !r.out) continue;
+    const version = firstLine(r.out);
+    if (versionAtLeast(version, min)) {
+      return { exe, args, version, label: [exe, ...args].join(" ") };
+    }
+  }
+  return null;
+}
+
+/** Lệnh cài tay venv gateway - sysPy null = venv đã có, chỉ thiếu gói */
+function gwManual(sysPy) {
+  const install = `"${GW_VENV_PY}" -m pip install -r gateways/requirements.txt`;
+  return sysPy ? `${sysPy.label} -m venv "${GW_VENV}" && ${install}` : install;
+}
+
+/**
+ * Venv gateway đủ gói chưa. find_spec (không import thật) để mục này không làm
+ * chậm cả trang Cấu hình: import fastapi + gemini_webapi thật mất 1-2s.
+ */
+function probeGatewayVenv() {
+  if (!fs.existsSync(GW_VENV_PY)) return { ok: false, version: null, note: null };
+  const r = run(GW_VENV_PY, ["-c", PY_VERSION_SNIPPET], 8000, runtimeEnv());
+  if (!r.ok || !r.out) return { ok: false, version: null, note: null };
+  const version = firstLine(r.out);
+  if (!versionAtLeast(version, GW_MIN_PY)) return { ok: false, version, note: "python-too-old" };
+  const mods = JSON.stringify(GW_MODULES);
+  const check = run(
+    GW_VENV_PY,
+    ["-c", `import importlib.util as u, sys; sys.exit(0 if all(u.find_spec(m) for m in ${mods}) else 1)`],
+    20_000,
+    runtimeEnv(),
+  );
+  return check.ok ? { ok: true, version, note: null } : { ok: false, version, note: "module-missing" };
+}
+
 /**
  * Cache model huggingface CŨ nằm ngoài dự án (mặc định ~/.cache/huggingface).
  * Trả về thư mục ĐÁNG chuyển, hoặc null nếu không có gì.
@@ -415,6 +504,17 @@ export function runDoctor() {
     // Windows thì PATH mới chỉ có hiệu lực ở cửa sổ sau.
     fix: { auto: false, manual: `https://nodejs.org (v${MIN_NODE_MAJOR}+)`, url: "https://nodejs.org" },
   });
+  // Đủ bản chính nhưng thiếu bản vá bảo mật: báo (optional), không chặn khởi động
+  if (nodeMajor >= MIN_NODE_MAJOR) {
+    checks.push({
+      id: "node-security",
+      label: "Node.js patch",
+      level: "optional",
+      status: nodePatched(process.versions.node) ? "ok" : "missing",
+      detail: `v${process.versions.node}`,
+      fix: { auto: false, manual: "https://nodejs.org (latest LTS)", url: "https://nodejs.org" },
+    });
+  }
 
   // --- FFmpeg (kèm ffprobe) ---
   const ffmpeg = findFfmpeg();
@@ -568,7 +668,9 @@ export function runDoctor() {
     status: whisper.ok ? "ok" : "missing",
     detail: whisper.ok ? pyLabel : py ? `Python ${py.version}` : "",
     note: whisper.note,
-    fix: pipFix(["faster-whisper"], "~300 MB"),
+    // av < 17: PyAV 17+ bỏ tham số `metadata_errors` mà faster-whisper 1.2.x vẫn truyền
+    // vào av.open() -> mọi lượt transcribe chết với TypeError (gặp thật 2026-10, av 19.0.1)
+    fix: pipFix(["faster-whisper", "av>=11,<17"], "~300 MB"),
   });
 
   // --- VieNeu-TTS (giọng đọc chạy trên máy + nhân bản giọng) ---
@@ -632,6 +734,37 @@ export function runDoctor() {
       : null,
   });
 
+  // --- Gateway tạo ảnh (ChatGPT web + Gemini web) - venv riêng ---
+  // Optional và CẦN XÁC NHẬN (confirm): ~80 MB gói Python của mã bên thứ ba (AGPL-3.0) chạy
+  // thành tiến trình riêng - start script chạy nền không được tự cài thứ này.
+  const gw = probeGatewayVenv();
+  const gwPy = gw.ok ? null : findPythonAtLeast(GW_MIN_PY);
+  checks.push({
+    id: "image-gateway",
+    label: "Image gateway",
+    level: "optional",
+    status: gw.ok ? "ok" : "missing",
+    detail: gw.version ? `Python ${gw.version} - .runtime/venv-gateway` : gwPy ? `Python ${gwPy.version}` : "",
+    note: gw.ok ? null : gw.note ?? (gwPy ? "venv-missing" : "python-too-old"),
+    fix: gw.ok
+      ? null
+      : gw.version || gwPy
+        ? {
+            auto: true,
+            kind: "gateway-venv",
+            size: "~80 MB",
+            target: GW_VENV,
+            confirm: true,
+            manual: gwManual(gw.version ? null : gwPy),
+            command: gwManual(gw.version ? null : gwPy),
+          }
+        : {
+            auto: false,
+            manual: "Python >= 3.13 (python.org)",
+            url: "https://www.python.org/downloads/",
+          },
+  });
+
   // --- Gemini API key (tạo ảnh) ---
   const gemini = !!envVar("GEMINI_API_KEY");
   checks.push({
@@ -678,6 +811,7 @@ export function runDoctor() {
   const parts = [
     ["models", dirStats(RUNTIME_DIRS.models)],
     ["venv", dirStats(RUNTIME_DIRS.venv)],
+    ["venv-gateway", dirStats(GW_VENV)],
     ["pip-cache", dirStats(RUNTIME_DIRS.pipCache)],
     ["bin", dirStats(RUNTIME_DIRS.bin)],
   ]
@@ -869,6 +1003,48 @@ async function pipInstall(pkgs, log) {
 }
 
 /**
+ * Dựng .runtime/venv-gateway (Python >= 3.13) rồi cài gateways/requirements.txt.
+ * Venv cũ dựng bằng Python quá cũ thì xóa dựng lại - pip không nâng được
+ * chính trình thông dịch của venv.
+ */
+async function installGatewayVenv(log) {
+  ensureRuntimeDirs();
+  if (!fs.existsSync(GW_REQUIREMENTS)) {
+    log(`Thiếu ${GW_REQUIREMENTS} - bản cài đặt bị lỗi, tải lại repo.`);
+    return false;
+  }
+  const cur = probeGatewayVenv();
+  if (cur.version && !versionAtLeast(cur.version, GW_MIN_PY)) {
+    log(`Venv gateway đang dùng Python ${cur.version} (< ${GW_MIN_PY.join(".")}) - xóa để dựng lại.`);
+    fs.rmSync(GW_VENV, { recursive: true, force: true });
+  }
+  if (!fs.existsSync(GW_VENV_PY)) {
+    const py = findPythonAtLeast(GW_MIN_PY);
+    if (!py) {
+      log(`Chưa có Python >= ${GW_MIN_PY.join(".")} trên máy - cài từ python.org rồi chạy lại.`);
+      return false;
+    }
+    log(`Tạo venv gateway bằng Python ${py.version}: ${GW_VENV}`);
+    const made = await spawnLogged(py.exe, [...py.args, "-m", "venv", GW_VENV], log, runtimeEnv());
+    if (!made || !fs.existsSync(GW_VENV_PY)) {
+      log("Không tạo được venv gateway (thiếu module venv?).");
+      return false;
+    }
+  }
+  log(`Cài gói gateway vào ${GW_VENV} (cache: ${RUNTIME_DIRS.pipCache})`);
+  // `python -m pip` thay vì pip.exe: trên Windows pip.exe không tự nâng được chính nó
+  await spawnLogged(GW_VENV_PY, ["-m", "pip", "install", "--upgrade", "pip"], log, runtimeEnv());
+  const ok = await spawnLogged(
+    GW_VENV_PY,
+    ["-m", "pip", "install", "-r", GW_REQUIREMENTS],
+    log,
+    runtimeEnv(),
+  );
+  forgetDirStats();
+  return ok && probeGatewayVenv().ok;
+}
+
+/**
  * Chuyển cache model cũ (ổ hệ thống) sang .runtime/models. 13 GB nên:
  *   - rename trước: cùng ổ thì tức thì, không chép một byte nào;
  *   - khác ổ (C: -> F:, ca thường gặp) thì CHÉP rồi mới xóa;
@@ -956,6 +1132,8 @@ export async function applyFix(id, { log = () => {} } = {}) {
     ok = await installCloudflaredMac(log);
   } else if (fix.kind === "pip") {
     ok = await pipInstall(fix.pkgs, log);
+  } else if (fix.kind === "gateway-venv") {
+    ok = await installGatewayVenv(log);
   } else if (fix.kind === "move-models") {
     ok = await moveModelCache(log);
   } else if (fix.kind === "ffmpeg-win-local") {
@@ -997,6 +1175,7 @@ const TEXT = {
       "Mọi thứ dự án tải về (model, venv, cache pip, binary) nằm trong .runtime/ - bỏ thư mục này ra khỏi backup.",
     why: {
       node: "nền tảng chạy toàn hệ thống",
+      "node-security": "bản Node này còn lỗ hổng đã công bố - cập nhật bản mới nhất cùng dòng",
       ffmpeg: "cắt, ghép, encode video",
       chrome: "HyperFrames và Remotion render qua Chrome ẩn",
       "claude-cli": "một cách đăng nhập subscription (cách kia là API key)",
@@ -1006,6 +1185,7 @@ const TEXT = {
       "vieneu-clone": "nhân bản giọng từ một đoạn ghi âm ngắn",
       "models-dir": "model AI để trong ổ của dự án, không nằm nhờ ổ hệ thống",
       gemini: "tạo ảnh nền và ảnh minh họa",
+      "image-gateway": "tạo ảnh bằng tài khoản ChatGPT / Gemini web (không cần API key)",
       cloudflared: "mở dashboard qua 4G/5G",
       runtime: "chỗ dự án cất mọi thứ tải về",
       gpu: "render nhanh hơn",
@@ -1020,6 +1200,7 @@ const TEXT = {
       "models-elsewhere": "model đang nằm ngoài dự án - chuyển được, không phải tải lại",
       "models-empty": "chưa có model nào - tải khi dùng lần đầu",
       "cpu-only": "không có GPU tăng tốc - render bằng CPU",
+      "python-too-old": "cần Python 3.13 trở lên",
     },
   },
   en: {
@@ -1041,6 +1222,7 @@ const TEXT = {
       "Everything the project downloads (models, venv, pip cache, binaries) lives in .runtime/ - exclude that folder from backups.",
     why: {
       node: "runtime for the whole system",
+      "node-security": "this Node release has published vulnerabilities - update to the latest of its line",
       ffmpeg: "cut, concat and encode video",
       chrome: "HyperFrames and Remotion render through headless Chrome",
       "claude-cli": "one way to sign in with a subscription (the other is an API key)",
@@ -1050,6 +1232,7 @@ const TEXT = {
       "vieneu-clone": "clone a voice from a short recording",
       "models-dir": "keeps the AI models on the project drive, not the system drive",
       gemini: "background and illustration images",
+      "image-gateway": "generate images with a ChatGPT / Gemini web account (no API key)",
       cloudflared: "reach the dashboard over 4G/5G",
       runtime: "where the project keeps everything it downloads",
       gpu: "faster rendering",
@@ -1064,6 +1247,7 @@ const TEXT = {
       "models-elsewhere": "models live outside the project - they can be moved, not re-downloaded",
       "models-empty": "no models yet - downloaded on first use",
       "cpu-only": "no hardware acceleration - rendering on CPU",
+      "python-too-old": "needs Python 3.13 or newer",
     },
   },
 };

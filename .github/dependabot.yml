@@ -1,0 +1,38 @@
+# Dependabot: mở PR nâng phiên bản dependency mỗi tuần, gộp lại cho đỡ ồn.
+# PR chỉ là ĐỀ XUẤT - vẫn phải CI xanh và đọc changelog trước khi merge (nhất là
+# remotion/hyperframes/next: nâng lệch là render ra khác).
+version: 2
+updates:
+  # npm workspaces (apps/web, apps/server, engines/remotion) dùng chung một
+  # package-lock.json ở gốc - khai một mục ở "/" là đủ
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Nâng bản vá/minor: một PR chung. Bản major vẫn tách riêng từng gói.
+      npm-minor-patch:
+        update-types: [minor, patch]
+      # Advisory bảo mật: một PR riêng, không chờ lịch tuần
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # Action trong .github/workflows đã ghim SHA - Dependabot nâng SHA + comment
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Python của gateway tạo ảnh (gateways/requirements.txt). Chỉ nhận PR BẢO
+  # MẬT: các cận trên trong file đã khóa theo bản đã chạy thử với upstream,
+  # nâng tùy tiện là vỡ gateway (xem chú thích trong requirements.txt).
+  - package-ecosystem: pip
+    directory: /gateways
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0

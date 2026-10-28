@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-08-03T05:51:28.822Z",
+  "generatedAt": "2026-10-27T21:48:21.456Z",
   "source": "https://simple-icons.org",
   "license": "CC0-1.0 (áp cho file SVG, KHÔNG áp cho quyền nhãn hiệu của brand)",
   "notice": "Logo là nhãn hiệu của chủ sở hữu. Dùng để nhắc tới/minh họa thì được; không được dùng theo cách ngụ ý brand đó tài trợ hay chứng thực nội dung. Glyph một màu - cần bản đủ màu thì tải từ trang brand chính chủ và bỏ vào thư mục này.",
-  "count": 121,
+  "count": 125,
   "icons": [
     {
       "slug": "alibabadotcom",
@@ -259,11 +259,27 @@
       "source": "https://partnermarketinghub.withgoogle.com"
     },
     {
+      "slug": "googlechrome",
+      "title": "Google Chrome",
+      "color": "#4285F4",
+      "file": "googlechrome.svg",
+      "source": "https://simple-icons.org",
+      "license": "CC0-1.0 (file SVG; KHÔNG áp cho quyền nhãn hiệu)"
+    },
+    {
       "slug": "googlegemini",
       "title": "Google Gemini",
       "color": "#8E75B2",
       "file": "googlegemini.svg",
       "source": "https://gemini.google.com"
+    },
+    {
+      "slug": "googlesearch",
+      "title": "Google Search",
+      "color": null,
+      "file": "googlesearch.svg",
+      "source": "https://commons.wikimedia.org/wiki/File:Google%20Search%202026.svg",
+      "license": "Wikimedia Commons (xem trang file); nhãn hiệu thuộc chủ sở hữu"
     },
     {
       "slug": "grab",
@@ -449,6 +465,14 @@
       "source": "https://brand.netflix.com/en/assets/logos"
     },
     {
+      "slug": "newegg",
+      "title": "Newegg",
+      "color": "#E05E00",
+      "file": "newegg.svg",
+      "source": "https://simple-icons.org",
+      "license": "CC0-1.0 (file SVG; KHÔNG áp cho quyền nhãn hiệu)"
+    },
+    {
       "slug": "nextdotjs",
       "title": "Next.js",
       "color": "#000000",
@@ -623,6 +647,14 @@
       "color": "#EE4D2D",
       "file": "shopee.svg",
       "source": "https://shopee.com"
+    },
+    {
+      "slug": "shopify",
+      "title": "Shopify",
+      "color": "#7AB55C",
+      "file": "shopify.svg",
+      "source": "https://simple-icons.org",
+      "license": "CC0-1.0 (file SVG; KHÔNG áp cho quyền nhãn hiệu)"
     },
     {
       "slug": "signal",

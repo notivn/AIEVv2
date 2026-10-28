@@ -66,9 +66,12 @@ $srcStamp = (node (Join-Path $root "start\build-stamp.mjs") --print)
 
 function Stop-AievPorts {
     foreach ($port in 6868, 6869) {
+        # ErrorActionPreference=Stop + `2>$null` trên lệnh ngoài: PowerShell 5.1 coi
+        # mỗi dòng stderr của taskkill là lỗi chặn và dừng cả script - hạ về
+        # Continue trong scope con (xem update.ps1)
         Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
             Select-Object -ExpandProperty OwningProcess -Unique |
-            ForEach-Object { taskkill /pid $_ /t /f 2>$null | Out-Null }
+            ForEach-Object { & { $ErrorActionPreference = "Continue"; taskkill /pid $_ /t /f 2>$null | Out-Null } }
     }
     Remove-Item $runFile -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1

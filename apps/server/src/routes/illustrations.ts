@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Router } from "express";
-import { generateBackground } from "../gemini.js";
+import { ASPECT_SIZE, generateImage, isImageProviderChoice } from "../imageProviders/index.js";
 import { activeVideoStyleId, briefOf, projectExists, readMeta, writeAssetEntry } from "../meta.js";
 import { getStyle, styleExists } from "../styles.js";
 import { getVideoStyle } from "../videoStyles.js";
@@ -17,7 +17,9 @@ import { IMAGE_TEXT_POSITIONS, type ImageAspect, type ImageTextPosition } from "
  * này trả 409 ILLUSTRATIONS_DISABLED - công tắc trên UI phải có hiệu lực thật,
  * không phụ thuộc vào việc agent có đọc kỹ prompt hay không.
  *
- * Ảnh sinh bằng Gemini, prompt tự trộn
+ * Ảnh sinh qua imageProviders/generateImage (Gemini API / ChatGPT web / Gemini web -
+ * body.provider hoặc body.model, thiếu thì brief.illustrationModel, rồi tới mặc
+ * định ở trang Kết nối), prompt tự trộn
  * Style Design nên đồng bộ thương hiệu; cấm chữ trong ảnh. Style Design là BẮT BUỘC:
  * thiếu body.styleId thì server tự lấy brief.styleId của project (rồi mới tới default) -
  * agent quên truyền cũng không thoát được style đã chọn cho video.
@@ -28,8 +30,8 @@ const ASPECTS: ImageAspect[] = ["9:16", "16:9", "1:1", "4:5"];
 
 const router = Router();
 
-// POST /api/illustrations { projectId, prompt, name?, aspect?, model?, description?, styleId?, allowText?, position? }
-// → { file, relPath, promptUsed }
+// POST /api/illustrations { projectId, prompt, name?, aspect?, provider?, model?, description?, styleId?, allowText?, position? }
+// → { file, relPath, promptUsed, provider }
 router.post("/", async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
@@ -57,10 +59,23 @@ router.post("/", async (req, res) => {
   if (!prompt) {
     throw new HttpError(400, "PROMPT_REQUIRED", "Thiếu prompt mô tả nội dung ảnh minh họa");
   }
-  const aspect = ASPECTS.includes(body.aspect as ImageAspect)
-    ? (body.aspect as ImageAspect)
-    : "9:16";
-  const model = typeof body.model === "string" && body.model ? body.model : undefined;
+  // Có aspect thì theo aspect (kích thước chuẩn của tỉ lệ đó); không có thì
+  // đúng khung của project - ảnh cover-fit khít khung, không lệch viền
+  const meta = readMeta(projectId);
+  const aspect = ASPECTS.includes(body.aspect as ImageAspect) ? (body.aspect as ImageAspect) : undefined;
+  const size = aspect ? ASPECT_SIZE[aspect] : { width: meta.width, height: meta.height };
+  if (body.provider !== undefined && body.provider !== null && !isImageProviderChoice(body.provider)) {
+    throw new HttpError(
+      400,
+      "INVALID_PROVIDER",
+      'provider phải là một trong: "auto", "gemini-api", "chatgpt-web", "gemini-web"',
+    );
+  }
+  const provider = typeof body.provider === "string" ? body.provider : undefined;
+  // model: body → brief.illustrationModel (người dùng chọn trong Kịch bản edit).
+  // Giá trị cũ là id model Gemini API; giá trị mới "auto" | "chatgpt-web" | "gemini-web" | "gemini-api"
+  const model =
+    typeof body.model === "string" && body.model ? body.model : (brief.illustrationModel ?? undefined);
   const description = typeof body.description === "string" ? body.description.trim() : "";
   if ("styleId" in body && body.styleId !== null && typeof body.styleId !== "string") {
     throw new HttpError(400, "INVALID_STYLE_ID", "styleId phải là string hoặc null");
@@ -112,14 +127,18 @@ router.post("/", async (req, res) => {
   // chỉ cần một lần nó truyền khác là video có một tấm lạc phong cách.
   const videoStyle = getVideoStyle(activeVideoStyleId(brief));
   let promptUsed: string;
+  let usedProvider: string;
   try {
-    ({ promptUsed } = await generateBackground({
+    ({ promptUsed, provider: usedProvider } = await generateImage({
       prompt,
       kind: "concept",
       aspect,
+      width: size.width,
+      height: size.height,
       design,
       outFile,
       usageProjectId: projectId,
+      provider,
       model,
       allowText,
       videoStyle,
@@ -148,6 +167,7 @@ router.post("/", async (req, res) => {
     file: fileName,
     relPath: `video-projects/${projectId}/assets/illustrations/${fileName}`,
     promptUsed,
+    provider: usedProvider,
   });
 });
 

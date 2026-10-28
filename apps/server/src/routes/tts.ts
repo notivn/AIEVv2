@@ -98,9 +98,10 @@ router.get("/models", async (_req, res) => {
  * Web KHÔNG được tự suy: có key Gemini chưa, cài Python chưa, có torch chưa -
  * đó là chuyện của máy chạy server. Trả cả `reason` dạng mã để web tự dịch sang
  * ngôn ngữ đang hiện, và `detail` là dữ liệu kỹ thuật thô (không dịch).
+ * `?refresh=1` dò lại từ đầu và xóa cờ "không nạp được model" (nút "Kiểm tra lại").
  */
-router.get("/engines", async (_req, res) => {
-  const local = await probeLocalEngine();
+router.get("/engines", async (req, res) => {
+  const local = await probeLocalEngine(req.query.refresh === "1");
   const hasKey = Boolean(geminiApiKey());
   res.json(
     TTS_ENGINES.map((engine) =>

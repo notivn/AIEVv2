@@ -63,6 +63,8 @@ const upload = multer({
     filename: (_req, _file, cb) => cb(null, `up-${Date.now()}-${Math.round(Math.random() * 1e9)}`),
   }),
   limits: { fileSize: 200 * 1024 * 1024 },
+  // Tên file multipart là UTF-8 thô - mặc định latin1 làm tên có dấu ra mojibake (xem routes/assets.ts)
+  defParamCharset: "utf8",
 });
 
 // GET /api/music - chỉ trả entry có file tồn tại trên đĩa
@@ -158,6 +160,10 @@ router.patch("/:file", (req, res) => {
 // DELETE /api/music/:file
 router.delete("/:file", (req, res) => {
   const file = path.basename(req.params.file); // chặn traversal
+  // Chỉ xóa file audio - cùng lý do với DELETE /api/sfx (library.json, README...)
+  if (fileKind(file) !== "audio") {
+    throw new HttpError(404, "MUSIC_NOT_FOUND", `Không tìm thấy bài nhạc "${file}"`);
+  }
   const abs = path.join(paths.musicDir, file);
   const entries = readMusicLibrary();
   const exists = entries.some((e) => e.file === file) || fs.existsSync(abs);

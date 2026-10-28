@@ -8,6 +8,7 @@ import {
 } from "remotion";
 import type { SubtitleCue, SubtitleStyle } from "../manifest";
 import { useMediaSrc, type MediaResolver } from "../media";
+import { cueBoxAttrs, cueOffsetCss, cueScaleOf } from "./cueTransform";
 import { fadeInOut } from "./fade";
 import {
   useVietnameseFont,
@@ -107,9 +108,10 @@ const RAISED_BOTTOM_HORIZONTAL = 470;
 
 const Cue: React.FC<{
   cue: SubtitleCue;
+  index: number;
   style?: SubtitleStyle;
   raised: boolean;
-}> = ({ cue, style, raised }) => {
+}> = ({ cue, index, style, raised }) => {
   const frame = useCurrentFrame(); // 0 tại cue.from (đang trong <Sequence>)
   const { width, height } = useVideoConfig();
   const last = cue.durationInFrames - 1;
@@ -164,8 +166,9 @@ const Cue: React.FC<{
       }}
     >
       <div
+        {...cueBoxAttrs("subtitle", index)}
         style={{
-          transform: `translateY(${y}px)`,
+          transform: `${cueOffsetCss(cue.transform, width, height)}translateY(${y}px) scale(${cueScaleOf(cue.transform)})`,
           // Glass theo brand: viền bằng box-shadow inset, KHÔNG border 1px cứng.
           // backdrop "none" thì bỏ sạch nền/viền/bóng hộp, chỉ còn chữ + text-shadow.
           background: backdrop === "none" ? "transparent" : backdropColor,
@@ -227,7 +230,7 @@ export const SubtitleTrack: React.FC<{
           from={cue.from}
           durationInFrames={cue.durationInFrames}
         >
-          <Cue cue={cue} style={style} raised={raised} />
+          <Cue cue={cue} index={index} style={style} raised={raised} />
         </Sequence>
       ))}
     </>

@@ -27,7 +27,12 @@ import { CheckboxField, Field, SwitchField } from "@/components/Field";
 import { Panel } from "@/components/Panel";
 import { Segmented } from "@/components/Segmented";
 import { TagInput } from "@/components/TagInput";
-import { TextPositionPicker, useGeminiImageModels } from "@/components/ImageProjectForm";
+import {
+  ImageModelOptions,
+  TextPositionPicker,
+  useGeminiImageModels,
+  useImageModelChoices,
+} from "@/components/ImageProjectForm";
 import { useProviders } from "@/components/ModelPicker";
 import { StyleSelect } from "@/components/StyleSelect";
 import { VideoStyleSelect } from "@/components/VideoStyleSelect";
@@ -50,6 +55,13 @@ const LINK_BTN =
 const SUBFIELDS = "flex flex-col gap-3 pl-4";
 
 export const DEFAULT_BRIEF: Brief = {
+  sourceKind: "video",
+  sourceUrl: "",
+  sourceText: "",
+  narrationMode: "none",
+  // Khớp defaultVoice() phía server (textToVideoMeta.ts)
+  narrationVoice: { engine: "gemini", model: null, name: "Kore", style: "", language: "vi-VN", speed: 1 },
+  narrationFile: "",
   sourceDescription: "",
   // Khớp defaultBrief() phía server - lệch default là lưu sớm sẽ âm thầm đổi hành vi
   autoCut: true,
@@ -141,10 +153,11 @@ export function BriefFields({
   } = useGeminiImageModels();
   // Chưa fetch live → tạm dùng danh sách tĩnh từ /api/providers
   const illustrationModelOptions = liveIllustrationModels ?? gemini?.models ?? [];
-  // Model đã lưu không (chưa) nằm trong danh sách → vẫn hiển thị bằng id thô
-  const illustrationModelMissing =
-    value.illustrationModel !== null &&
-    !illustrationModelOptions.some((m) => m.id === value.illustrationModel);
+  // Provider (Tự động / ChatGPT web / Gemini web) + model đã lưu nằm ngoài danh sách
+  const illustrationChoices = useImageModelChoices(
+    value.illustrationModel,
+    illustrationModelOptions
+  );
 
   useEffect(() => {
     getSkills()
@@ -414,7 +427,9 @@ export function BriefFields({
                     <Loader2 size={13} strokeWidth={2} className="animate-spin" />
                     {t("images.loading-models")}
                   </span>
-                ) : undefined
+                ) : (
+                  illustrationChoices.hint
+                )
               }
             >
               <select
@@ -426,17 +441,11 @@ export function BriefFields({
                   set("illustrationModel", e.target.value || null)
                 }
               >
-                <option value="">{t("images.model-default")}</option>
-                {illustrationModelMissing && (
-                  <option value={value.illustrationModel!}>
-                    {value.illustrationModel}
-                  </option>
-                )}
-                {illustrationModelOptions.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
+                <ImageModelOptions
+                  current={value.illustrationModel}
+                  geminiModels={illustrationModelOptions}
+                  choices={illustrationChoices}
+                />
               </select>
             </Field>
             {/* Mật độ ảnh - số ảnh Gemini mỗi phút video; null = AI tự quyết */}
@@ -494,7 +503,9 @@ export function BriefFields({
               label={t("brief.illustration-text")}
               hint={t("brief.illustration-text-hint")}
             />
-            {!geminiConnected && (
+            {/* Thiếu GEMINI_API_KEY chỉ đáng cảnh báo khi cũng chưa có
+                provider web nào (ChatGPT / Gemini web) để vẽ thay */}
+            {!geminiConnected && !illustrationChoices.anyWebConfigured && (
               <p className="flex items-start gap-2 text-sm font-medium text-[var(--danger)]">
                 <AlertTriangle
                   size={14}

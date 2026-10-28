@@ -83,6 +83,8 @@ const upload = multer({
     filename: (_req, _file, cb) => cb(null, `up-${Date.now()}-${Math.round(Math.random() * 1e9)}`),
   }),
   limits: { fileSize: 200 * 1024 * 1024 },
+  // Tên file multipart là UTF-8 thô - mặc định latin1 làm tên có dấu ra mojibake (xem routes/assets.ts)
+  defParamCharset: "utf8",
 });
 
 // GET /api/sfx - chỉ trả entry có file tồn tại trên đĩa
@@ -208,6 +210,11 @@ router.patch("/:file", (req, res) => {
 // DELETE /api/sfx/:file
 router.delete("/:file", (req, res) => {
   const file = path.basename(req.params.file); // chặn traversal
+  // Chỉ xóa file audio: thư mục còn library.json, README (nguồn/giấy phép)... - không
+  // chặn thì DELETE /api/sfx/README.md (hay "library.json." trên Windows) xóa luôn
+  if (fileKind(file) !== "audio") {
+    throw new HttpError(404, "SFX_NOT_FOUND", `Không tìm thấy sound effect "${file}"`);
+  }
   const abs = path.join(paths.sfxDir, file);
   const entries = readLibrary();
   const exists = entries.some((e) => e.file === file) || fs.existsSync(abs);

@@ -114,6 +114,8 @@ interface Player {
 function usePlayer(): Player {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
+  /** false sau khi rời trang - bản đọc thử về muộn thì không phát nữa */
+  const mountedRef = useRef(true);
   const [playing, setPlaying] = useState<string | null>(null);
 
   const stop = useCallback(() => {
@@ -128,7 +130,9 @@ function usePlayer(): Player {
 
   // Rời trang giữa lúc đang phát -> tắt tiếng, không để audio chạy mồ côi
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       audioRef.current?.pause();
       audioRef.current = null;
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
@@ -138,6 +142,13 @@ function usePlayer(): Player {
 
   const play = useCallback(
     (key: string, src: string, opts?: { objectUrl?: boolean }) => {
+      // Đọc thử VieNeu lần đầu mất cả chục giây nạp model: rời trang trong lúc
+      // chờ thì dọn dẹp ở trên đã chạy rồi - phát lúc này là tiếng mồ côi, ở
+      // trang khác, không còn nút nào tắt được
+      if (!mountedRef.current) {
+        if (opts?.objectUrl) URL.revokeObjectURL(src);
+        return;
+      }
       stop();
       const audio = new Audio(src);
       audio.onended = () => stop();
@@ -1040,10 +1051,11 @@ export default function VoicesPage() {
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
 
-  const loadEngines = useCallback(async () => {
+  // refresh = nút "Kiểm tra lại": server dò lại từ đầu, xóa cả cờ "không nạp được model"
+  const loadEngines = useCallback(async (refresh = false) => {
     setChecking(true);
     try {
-      const list = await getTtsEngines();
+      const list = await getTtsEngines(refresh);
       setStatus(list.find((e) => e.engine === OFFLINE_ENGINE) ?? null);
       setError(null);
     } catch (e) {
@@ -1109,7 +1121,7 @@ export default function VoicesPage() {
         status={status ?? null}
         state={state}
         checking={checking}
-        onRecheck={() => void loadEngines()}
+        onRecheck={() => void loadEngines(true)}
       />
 
       {/* 2. Kho giọng đã nhân bản. Thẻ giọng TỰ NÓ là một <Card> nên đứng thẳng

@@ -6,6 +6,10 @@
  * timeline, hoặc bấm "+" (bàn phím) để thêm tại playhead - cả hai đi chung
  * `onAdd`/`onDrop` của trang (VideoEditor), cột này không tự sửa timeline.
  *
+ * Nút "Tải lên" (và thả file từ máy vào bất kỳ đâu trong trình chỉnh sửa) đưa
+ * file vào assets của project qua `onUpload` của trang - trang lo tải tuần tự +
+ * tiến độ. Tab "AI" là khe do trang truyền vào (`aiPanel` - tạo ảnh / cảnh trám).
+ *
  * Nghe thử: MỘT phần tử <audio> dùng chung cho cả cột - bấm món khác là món
  * đang phát dừng, gấp cột/rời trang là dừng hẳn. Không mỗi hàng một <audio>
  * (88 hiệu ứng = 88 phần tử media nạp metadata cùng lúc).
@@ -15,6 +19,7 @@ import {
   AudioLines,
   FolderOpen,
   Image as ImageIcon,
+  Layers,
   Library,
   Loader2,
   Music,
@@ -24,10 +29,11 @@ import {
   Play,
   Plus,
   SearchX,
+  Upload,
   Video,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/Button";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
@@ -46,10 +52,12 @@ import {
   type LibraryItem as ApiLibraryItem,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-import { dropTracksOf, projectRelPath, writeDragData, type LibraryItem } from "./library";
+import { dropTracksOf, projectRelPath, writeDragData, type DropTrack, type LibraryItem } from "./library";
 
-type Tab = "project" | "sfx" | "music";
+type Tab = "project" | "sfx" | "music" | "ai";
 
+/** Loại file nút "Tải lên" mở ra - đúng nhóm server nhận cho media của timeline. */
+const UPLOAD_ACCEPT = "video/*,image/*,audio/*,.mkv,.m4v,.avif,.flac";
 
 export const libraryItemKey = (item: LibraryItem): string =>
   item.source === "project" ? `project:${item.relPath}` : `${item.source}:${item.file}`;
@@ -87,6 +95,9 @@ export function LibraryPanel({
   busyKey,
   refreshKey,
   onAdd,
+  onUpload,
+  uploading,
+  aiPanel,
 }: {
   projectId: string;
   collapsed: boolean;
@@ -96,7 +107,14 @@ export function LibraryPanel({
   busyKey: string | null;
   /** Đổi giá trị = tải lại danh sách file của project (vừa chép file mới vào) */
   refreshKey: number;
-  onAdd: (item: LibraryItem) => void;
+  /** "+" của một món: thêm tại playhead vào track mặc định, hoặc `track` chỉ định (nút "Thêm làm layer") */
+  onAdd: (item: LibraryItem, track?: DropTrack) => void;
+  /** File chọn từ nút "Tải lên" - trang tải tuần tự vào assets của project */
+  onUpload: (files: File[]) => void;
+  /** Đang có lượt tải lên chạy (nút bận) */
+  uploading: boolean;
+  /** Nội dung tab "AI" (tạo ảnh / cảnh trám) - vắng thì không có tab này */
+  aiPanel?: ReactNode;
 }) {
   const { t } = useT();
   const [tab, setTab] = useState<Tab>("project");
@@ -173,6 +191,9 @@ export function LibraryPanel({
     }
   }, []);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pickFiles = () => fileInputRef.current?.click();
+
   useEffect(() => {
     if (collapsed) return;
     if (tab === "sfx" && sfx === null) void loadLibrary("sfx");
@@ -236,6 +257,7 @@ export function LibraryPanel({
 
   const rows: Row[] | null = useMemo(() => {
     const match = (...parts: string[]) => !q || parts.some((p) => fold(p).includes(q));
+    if (tab === "ai") return [];
     if (tab === "project") {
       if (!assets) return null;
       return assets
@@ -308,7 +330,7 @@ export function LibraryPanel({
   }
 
   const error = tab === "project" ? assetsError : libError?.tab === tab ? libError.message : null;
-  const retry = () => (tab === "project" ? void loadAssets() : void loadLibrary(tab));
+  const retry = () => (tab === "project" ? void loadAssets() : tab === "ai" ? undefined : void loadLibrary(tab));
 
   let body;
   if (error && rows === null) {
@@ -339,7 +361,13 @@ export function LibraryPanel({
       <EmptyState
         icon={FolderOpen}
         title={t("editor.library.project-empty-title")}
-        description={t("editor.library.project-empty")}
+        description={t("editor.drop.library-empty")}
+        action={
+          <Button variant="secondary" small disabled={readOnly || uploading} onClick={pickFiles}>
+            <Upload size={14} strokeWidth={1.75} aria-hidden="true" />
+            {t("editor.drop.upload")}
+          </Button>
+        }
       />
     ) : tab === "music" ? (
       <EmptyState
@@ -382,6 +410,18 @@ export function LibraryPanel({
                   {isPlaying ? <Pause size={13} strokeWidth={2} /> : <Play size={13} strokeWidth={2} />}
                 </IconButton>
               )}
+              {/* Ảnh/video: thêm làm layer chồng tại playhead - đường bàn phím của
+                  "kéo thả lên track Layer" */}
+              {dropTracksOf(row.item).includes("layer") && (
+                <IconButton
+                  label={t("editor.layers.add-from-library")}
+                  size="sm"
+                  disabled={readOnly || busyKey !== null}
+                  onClick={() => onAdd(row.item, "layer")}
+                >
+                  <Layers size={13} strokeWidth={2} />
+                </IconButton>
+              )}
               <IconButton
                 label={
                   dropTracksOf(row.item)[0] === "music" ? t("editor.library.add-music") : t("editor.library.add")
@@ -407,18 +447,47 @@ export function LibraryPanel({
     <aside id="editor-library" className="editor-library" aria-label={t("editor.library.title")}>
       {audio}
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
+        <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
           <Library size={16} strokeWidth={1.75} className="text-[var(--text-muted)]" aria-hidden="true" />
-          {t("editor.library.title")}
+          <span className="truncate">{t("editor.library.title")}</span>
         </h2>
-        <IconButton
-          label={t("editor.library.collapse")}
-          aria-expanded={true}
-          aria-controls="editor-library"
-          onClick={() => onCollapsedChange(true)}
-        >
-          <PanelLeftClose size={16} strokeWidth={1.75} />
-        </IconButton>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="secondary"
+            small
+            disabled={readOnly || uploading}
+            onClick={pickFiles}
+            title={t("editor.drop.upload-hint")}
+          >
+            {uploading ? (
+              <Loader2 size={14} strokeWidth={2} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Upload size={14} strokeWidth={1.75} aria-hidden="true" />
+            )}
+            {t("editor.drop.upload")}
+          </Button>
+          <IconButton
+            label={t("editor.library.collapse")}
+            aria-expanded={true}
+            aria-controls="editor-library"
+            onClick={() => onCollapsedChange(true)}
+          >
+            <PanelLeftClose size={16} strokeWidth={1.75} />
+          </IconButton>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={UPLOAD_ACCEPT}
+          hidden
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            // Xóa giá trị: chọn lại ĐÚNG file đó lần nữa vẫn bắn change
+            e.target.value = "";
+            if (files.length > 0) onUpload(files);
+          }}
+        />
       </div>
       <Segmented
         label={t("editor.library.tabs")}
@@ -434,34 +503,46 @@ export function LibraryPanel({
           { value: "project", label: t("editor.library.tab-project") },
           { value: "sfx", label: t("editor.library.tab-sfx") },
           { value: "music", label: t("editor.library.tab-music") },
+          ...(aiPanel ? [{ value: "ai" as const, label: t("editor.library.tab-ai") }] : []),
         ]}
         className="shrink-0"
       />
-      {/* Toolbar tự có mb-3 (nó vốn đứng trên một bảng) - ở đây cột đã có gap */}
-      <div className="shrink-0 [&>div]:mb-0">
-        <Toolbar search={{ value: query, onChange: setQuery, placeholder: t("editor.library.search") }}>
-          {tab === "sfx" && sfxTags.length > 0 && (
-            <select
-              className="input h-8 w-full"
-              aria-label={t("editor.library.tag")}
-              value={tag ?? ""}
-              onChange={(e) => setTag(e.target.value || null)}
-            >
-              <option value="">{t("editor.library.tag-all")}</option>
-              {sfxTags.map(([name, n]) => (
-                <option key={name} value={name}>
-                  {`${name} (${n})`}
-                </option>
-              ))}
-            </select>
-          )}
-        </Toolbar>
-      </div>
-      <div ref={listRef} className="editor-library-list">
-        {body}
-      </div>
+      {/* Tab AI giữ MOUNT khi sang tab khác (chỉ ẩn): lượt tạo ảnh đang chờ vẫn
+          theo dõi tiếp và chèn ảnh khi xong */}
+      {aiPanel && (
+        <div className="editor-library-list" hidden={tab !== "ai"}>
+          {aiPanel}
+        </div>
+      )}
+      {tab !== "ai" && (
+        <>
+          {/* Toolbar tự có mb-3 (nó vốn đứng trên một bảng) - ở đây cột đã có gap */}
+          <div className="shrink-0 [&>div]:mb-0">
+            <Toolbar search={{ value: query, onChange: setQuery, placeholder: t("editor.library.search") }}>
+              {tab === "sfx" && sfxTags.length > 0 && (
+                <select
+                  className="input h-8 w-full"
+                  aria-label={t("editor.library.tag")}
+                  value={tag ?? ""}
+                  onChange={(e) => setTag(e.target.value || null)}
+                >
+                  <option value="">{t("editor.library.tag-all")}</option>
+                  {sfxTags.map(([name, n]) => (
+                    <option key={name} value={name}>
+                      {`${name} (${n})`}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Toolbar>
+          </div>
+          <div ref={listRef} className="editor-library-list">
+            {body}
+          </div>
+        </>
+      )}
       <p className="min-w-0 shrink-0 text-meta text-[var(--text-muted)] [overflow-wrap:anywhere]">
-        {readOnly ? t("editor.library.readonly") : t("editor.library.hint")}
+        {readOnly ? t("editor.library.readonly") : t("editor.drop.library-hint")}
       </p>
     </aside>
   );

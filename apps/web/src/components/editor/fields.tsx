@@ -157,6 +157,7 @@ export function TextField({
   hint,
   disabled = false,
   placeholder,
+  commitOnBlur = false,
 }: {
   id: string;
   label: ReactNode;
@@ -168,12 +169,21 @@ export function TextField({
   hint?: ReactNode;
   disabled?: boolean;
   placeholder?: string;
+  /**
+   * Chỉ ghi khi CHỐT (rời ô / Enter) như NumberField, Esc bỏ chữ đang gõ - cho ô
+   * mà chữ gõ dở KHÔNG vô hại: cả câu karaoke gõ dở (xóa hết một từ rồi gõ lại)
+   * là đổi số từ giữa chừng → mốc karaoke của cả câu bị chia lại dù câu cuối
+   * cùng vẫn đúng số từ cũ.
+   */
+  commitOnBlur?: boolean;
 }) {
   const { t } = useT();
   const { endCoalesce } = useEditor();
   const [text, setText] = useState(value);
   const [focused, setFocused] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Esc vừa bấm: lần blur ngay sau đó KHÔNG ghi (chỉ với commitOnBlur) */
+  const revertRef = useRef(false);
 
   const [synced, setSynced] = useState(value);
   if (!focused && value !== synced) {
@@ -188,7 +198,7 @@ export function TextField({
       return;
     }
     setError(null);
-    onCommit(next);
+    if (!commitOnBlur) onCommit(next);
   };
   const common = {
     id,
@@ -199,16 +209,25 @@ export function TextField({
     "aria-invalid": error ? true : undefined,
     onFocus: () => setFocused(true),
     onBlur: () => {
+      const revert = revertRef.current;
+      revertRef.current = false;
+      if (commitOnBlur && !revert && text !== value && !(required && text.trim() === "")) onCommit(text);
       setFocused(false);
       setError(null);
       setText(value);
       endCoalesce();
     },
-    // Esc rời ô (chữ đã ghi sống thì giữ; hoàn tác bằng Ctrl+Z như mọi thao tác)
+    // Esc rời ô (chữ đã ghi sống thì giữ; hoàn tác bằng Ctrl+Z như mọi thao tác).
+    // commitOnBlur: Esc bỏ chữ đang gõ, Enter (ô một dòng) chốt
     onKeyDown: (e: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && commitOnBlur && !multiline) {
+        e.currentTarget.blur();
+        return;
+      }
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopPropagation();
+      if (commitOnBlur) revertRef.current = true;
       e.currentTarget.blur();
     },
   };
@@ -260,6 +279,202 @@ export function VolumeField({
           onBlur={endCoalesce}
         />
         <span className="w-10 shrink-0 text-right text-meta tabular-nums">{pct}%</span>
+      </div>
+    </Field>
+  );
+}
+
+/**
+ * Thanh trượt + ô số cho một thông số liên tục (vị trí, cỡ, màu, tốc độ…).
+ *
+ * - Kéo thanh trượt ghi SỐNG (trình phát thấy ngay) qua `onChange`; nơi gọi
+ *   truyền khóa gộp nên cả lượt kéo là MỘT bước hoàn tác - nhả chuột / nhả
+ *   phím / rời thanh thì `endCoalesce` khép bước đó lại.
+ * - Ô số bên cạnh để gõ giá trị chính xác: như NumberField, chỉ ghi khi chốt
+ *   (Enter / rời ô / ↑↓), Esc trả về giá trị đang lưu.
+ * - `scale`: giá trị lưu × scale = giá trị hiện (x lưu -1..1 hiện -100..100 %).
+ */
+export function SliderField({
+  id,
+  label,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  scale = 1,
+  digits = 0,
+  unit,
+  hint,
+  disabled = false,
+}: {
+  id: string;
+  label: ReactNode;
+  /** Giá trị LƯU (chưa nhân scale) */
+  value: number;
+  /** Giá trị lưu mới, đã kẹp trong [min, max] */
+  onChange: (value: number) => void;
+  /** Khoảng theo giá trị LƯU */
+  min: number;
+  max: number;
+  /** Bước theo giá trị LƯU */
+  step: number;
+  scale?: number;
+  /** Số chữ số thập phân của giá trị HIỆN */
+  digits?: number;
+  unit?: string;
+  hint?: ReactNode;
+  disabled?: boolean;
+}) {
+  const { t, tf } = useT();
+  const { endCoalesce } = useEditor();
+  const shown = fmtNumber(value * scale, digits);
+  const [text, setText] = useState(shown);
+  const [focused, setFocused] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const revertRef = useRef(false);
+  const [synced, setSynced] = useState(shown);
+  if (!focused && shown !== synced) {
+    setSynced(shown);
+    setText(shown);
+  }
+
+  const clamp = (v: number) => Math.min(max, Math.max(min, v));
+  // Làm tròn theo bước để 0.1 + 0.2 không thành 0.30000000000000004 trong meta.json
+  const snap = (v: number) => Math.round(v * 1e6) / 1e6;
+  const check = (n: number | null): string | null => {
+    if (n === null) return t("editor.field.number");
+    const stored = n / scale;
+    if (stored < min - 1e-9 || stored > max + 1e-9) {
+      return tf("editor.field.between", {
+        min: fmtNumber(min * scale, digits),
+        max: fmtNumber(max * scale, digits),
+      });
+    }
+    return null;
+  };
+
+  return (
+    <Field label={label} htmlFor={id} hint={hint} error={error}>
+      <div className="flex items-center gap-2">
+        <input
+          type="range"
+          className="slider min-w-0"
+          aria-label={typeof label === "string" ? label : undefined}
+          aria-valuetext={`${shown}${unit ?? ""}`}
+          min={min}
+          max={max}
+          step={step}
+          value={clamp(value)}
+          disabled={disabled}
+          onChange={(e) => onChange(snap(clamp(Number(e.target.value))))}
+          onPointerUp={endCoalesce}
+          onKeyUp={endCoalesce}
+          onBlur={endCoalesce}
+        />
+        <input
+          id={id}
+          className="input w-20 shrink-0 tabular-nums"
+          inputMode="decimal"
+          type="text"
+          value={text}
+          disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          onFocus={() => setFocused(true)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setError(check(parseNumber(e.target.value)));
+          }}
+          onBlur={() => {
+            const revert = revertRef.current;
+            revertRef.current = false;
+            const n = parseNumber(text);
+            if (!revert && n !== null && !check(n) && fmtNumber(n, digits) !== shown) {
+              onChange(snap(clamp(n / scale)));
+            }
+            setFocused(false);
+            setError(null);
+            setText(shown);
+            endCoalesce();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              revertRef.current = true;
+              e.currentTarget.blur();
+            }
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+              e.preventDefault();
+              const base = parseNumber(text);
+              const cur = base === null ? value : base / scale;
+              const next = snap(clamp(cur + (e.key === "ArrowUp" ? step : -step)));
+              setText(fmtNumber(next * scale, digits));
+              setError(null);
+              onChange(next);
+            }
+          }}
+        />
+        {unit && <span className="w-4 shrink-0 text-meta text-[var(--text-muted)]">{unit}</span>}
+      </div>
+    </Field>
+  );
+}
+
+/**
+ * Ô chọn màu (chữ, nền, viền của layer). `value` null = chưa đặt → hiện màu
+ * `fallback` (đúng mặc định engine vẽ) và nút "Bỏ" bị ẩn.
+ */
+export function ColorField({
+  id,
+  label,
+  value,
+  fallback,
+  onChange,
+  onClear,
+  hint,
+  disabled = false,
+}: {
+  id: string;
+  label: ReactNode;
+  value: string | null;
+  fallback: string;
+  onChange: (value: string) => void;
+  /** Xóa field (về mặc định). Bỏ trống = không cho xóa */
+  onClear?: () => void;
+  hint?: ReactNode;
+  disabled?: boolean;
+}) {
+  const { t } = useT();
+  const { endCoalesce } = useEditor();
+  // <input type=color> chỉ nhận #rrggbb - giá trị khác (rgba, tên màu) hiện bằng fallback
+  const hex = value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
+  return (
+    <Field label={label} htmlFor={id} hint={hint}>
+      <div className="flex items-center gap-2">
+        <input
+          id={id}
+          type="color"
+          className="input w-12 shrink-0 cursor-pointer p-1"
+          value={hex}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={endCoalesce}
+        />
+        <span className="min-w-0 flex-1 truncate text-meta tabular-nums text-[var(--text-muted)]">
+          {value ?? t("editor.inspector2.color-default")}
+        </span>
+        {onClear && value !== null && (
+          <button
+            type="button"
+            className="text-meta text-[var(--text-muted)] underline-offset-2 hover:underline"
+            disabled={disabled}
+            onClick={onClear}
+          >
+            {t("editor.inspector2.color-clear")}
+          </button>
+        )}
       </div>
     </Field>
   );

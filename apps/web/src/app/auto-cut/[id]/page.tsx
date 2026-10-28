@@ -343,6 +343,16 @@ export default function AutoCutDetailPage() {
     if (!isAutoCutJob(j, sessionId)) return;
     setJob(j);
     if (["done", "failed", "canceled"].includes(j.status)) load();
+    // Job phải XẾP HÀNG (queue đang bận) thì lúc bấm, phiên vẫn draft/planned -
+    // server chỉ ghi planning/cutting khi job thật sự chạy. Không nạp lại ở đây
+    // thì suốt lượt chạy trang không hiện tiến trình và vẫn mời bấm chạy tiếp.
+    else if (
+      j.status === "running" &&
+      session &&
+      session.status !== "planning" &&
+      session.status !== "cutting"
+    )
+      load();
   });
 
   // ---- Sửa đoạn: gộp thay đổi rồi PATCH một lần ----
@@ -534,6 +544,11 @@ export default function AutoCutDetailPage() {
   // mới cắt lại được ngay; re-plan lỗi thì segments là của kế hoạch CŨ, phải plan lại
   const retryStep: "plan" | "cut" =
     session.failedStep === "cut" && segments.length > 0 ? "cut" : "plan";
+  // Đúng luật của POST /cut: planned, hoặc failed Ở BƯỚC CUT. Re-plan hỏng vẫn
+  // để lại segments cũ (pendingCount > 0) - bày nút Cắt lúc đó là mời bấm vào 409.
+  const canCut =
+    session.status === "planned" ||
+    (session.status === "failed" && retryStep === "cut");
   const src = session.source;
   const sourceUrl = `${mediaUrl(src.relPath)}?v=${encodeURIComponent(
     session.updatedAt
@@ -859,7 +874,7 @@ export default function AutoCutDetailPage() {
                     <RefreshCw size={14} strokeWidth={2} />
                     {segments.length > 0 ? t("autocut.replan") : t("autocut.plan")}
                   </Button>
-                  {pendingCount > 0 && (
+                  {pendingCount > 0 && canCut && (
                     <Button small disabled={busy} onClick={() => run("cut")}>
                       {busy ? (
                         <Loader2 size={14} strokeWidth={2} className="animate-spin" />

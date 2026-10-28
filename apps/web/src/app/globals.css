@@ -67,6 +67,8 @@
      khối luôn là --text nên nền phải đủ nhạt cho cả hai theme. */
   --track-scene: #2f6fed;
   --track-scene-bg: #e7eefd;
+  --track-layer: #4f46e5;
+  --track-layer-bg: #ebeafd;
   --track-highlight: #d9480f;
   --track-highlight-bg: #fdeee6;
   --track-caption: #7c3aed;
@@ -115,6 +117,8 @@
 
   --track-scene: #5b8def;
   --track-scene-bg: #1c2740;
+  --track-layer: #8b8ef0;
+  --track-layer-bg: #24244a;
   --track-highlight: #f0742e;
   --track-highlight-bg: #3a2519;
   --track-caption: #a78bfa;
@@ -1416,6 +1420,10 @@ textarea.input {
   --block-fg: var(--track-scene);
   --block-bg: var(--track-scene-bg);
 }
+[data-track="layer"] {
+  --block-fg: var(--track-layer);
+  --block-bg: var(--track-layer-bg);
+}
 [data-track="overlay"] {
   --block-fg: var(--track-highlight);
   --block-bg: var(--track-highlight-bg);
@@ -1592,6 +1600,127 @@ textarea.input {
   border-radius: 9999px;
   background: var(--text);
   pointer-events: none;
+}
+
+/* Track đã khóa: làn kẻ sọc mờ, khối nhạt đi và không còn con trỏ kéo/cắt - vẫn
+   bấm chọn được để xem trong inspector. Nút khóa đang bật mang màu chính. */
+.tl-row[data-locked="true"] .tl-lane {
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--border) 6px 7px);
+}
+.tl-row[data-locked="true"] [data-block] {
+  opacity: 0.6;
+  cursor: default;
+}
+.tl-row[data-locked="true"] [data-edge] {
+  cursor: default;
+}
+.tl-lock[aria-pressed="true"] {
+  color: var(--primary);
+}
+
+/* Vạch giờ dưới con trỏ (rê chuột trên làn) - mốc mà chuột phải / phím G sẽ hỏi AI.
+   Đứt nét, màu mờ: không được lẫn với playhead (--primary, liền nét) */
+.tl-hover {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  width: 0;
+  border-left: 1px dashed var(--text-muted);
+  pointer-events: none;
+}
+.tl-hover-label {
+  position: absolute;
+  top: 6px;
+  left: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Lượt AI neo theo mốc: cờ trên thước (bấm được) + vạch dọc qua mọi track */
+.tl-ai-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 0;
+  border-left: 2px dotted var(--secondary);
+  pointer-events: none;
+}
+.tl-ai-line[data-status="failed"] {
+  border-left-color: var(--danger);
+}
+.tl-ai-flag {
+  position: absolute;
+  top: 4px;
+  z-index: 1;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--secondary);
+  color: var(--bg);
+  cursor: pointer;
+}
+.tl-ai-flag[data-status="failed"] {
+  background: var(--danger);
+}
+.tl-ai-flag:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+/* Ô "Tạo bằng AI tại đây" - nổi tại con trỏ (khung cuộn timeline cắt phần tràn) */
+.editor-menu.tl-ai-popover {
+  position: fixed;
+  right: auto;
+  z-index: 60;
+  gap: 8px;
+  margin-top: 0;
+  padding: 12px;
+}
+
+/* Track Layer nhiều làn: layer chồng thời gian tự xếp xuống làn dưới (packLanes).
+   Mỗi làn cao đúng một hàng track; vạch đứt mảnh giữa các làn để thấy ranh giới. */
+.tl-lanes {
+  display: flex;
+  flex-direction: column;
+}
+.tl-sublane {
+  position: relative;
+  height: 32px;
+  flex: none;
+}
+.tl-sublane + .tl-sublane {
+  border-top: 1px dashed var(--border);
+}
+/* Menu "+" của track Layer - cùng kiểu menu thanh trên, nhưng nổi theo vị trí nút
+   (position: fixed - nhãn track và khung cuộn cắt mọi thứ tràn ra ngoài) */
+.editor-menu.tl-add-menu {
+  position: fixed;
+  right: auto;
+  width: 220px;
+  margin-top: 0;
+}
+/* Đang kéo FILE từ máy vào trình chỉnh sửa: viền đứt quanh cả editor (thả đâu
+   cũng nhận - track Video/Layer/SFX chèn luôn, chỗ khác vào thư viện) */
+.editor-root[data-filedrop="true"] {
+  outline: 2px dashed var(--timeline-snap);
+  outline-offset: 4px;
+  border-radius: var(--radius-lg);
+}
+.editor-root[data-filedrop="reject"] {
+  outline: 2px dashed var(--danger);
+  outline-offset: 4px;
+  border-radius: var(--radius-lg);
 }
 
 /* Chip từ karaoke trong inspector: bấm để sửa, từ nhấn (hi) tô màu thương hiệu */

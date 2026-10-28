@@ -16,7 +16,7 @@ import { Banner } from "@/components/Banner";
 import { ChatThread } from "@/components/ChatThread";
 import { IconButton } from "@/components/IconButton";
 import { LinkButton } from "@/components/LinkButton";
-import { ShellRightPanel } from "@/components/Shell";
+import { ShellRightPanel, useRevealShellPanel } from "@/components/Shell";
 import {
   getChatSessions,
   getHealth,
@@ -34,6 +34,7 @@ export function EditorChat({
   projectId,
   onSessionStarted,
   beforeSend,
+  queued = null,
 }: {
   projectId: string;
   /**
@@ -44,8 +45,15 @@ export function EditorChat({
   beforeSend: () => Promise<boolean>;
   /** Báo trang biết phiên này thuộc project - để khóa chỉ đọc ngay khi AI chạy */
   onSessionStarted: (sessionId: string) => void;
+  /** Việc trang giao thẳng cho AI (vd "Nhờ AI" tại một mốc trên timeline) - gửi ngay */
+  queued?: { id: number; text: string } | null;
 }) {
   const { t } = useT();
+  const reveal = useRevealShellPanel();
+  // Có việc mới đẩy sang: mở panel chat cho người dùng thấy AI đang làm
+  useEffect(() => {
+    if (queued) reveal();
+  }, [queued, reveal]);
   const { resyncTick } = useEvents();
   const [session, setSession] = useState<ChatSession | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -147,6 +155,7 @@ export function EditorChat({
           session={session}
           send={send}
           emptyText={t("editor.chat.empty")}
+          queued={queued}
           onSessionCreated={(id) => {
             sessionIdRef.current = id;
             setSessionId(id);

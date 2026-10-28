@@ -43,6 +43,12 @@ const router = Router();
 const MAX_SCRIPT_CHARS = 20_000;
 
 /**
+ * Phiên đang bóc bài / viết kịch bản NGAY TRONG TIẾN TRÌNH NÀY. Hai bước đó chạy
+ * đồng bộ trong request chứ không qua queue, nên không có job nào để đối chiếu.
+ */
+const inFlight = new Set<string>();
+
+/**
  * Đồng bộ lại trạng thái với SỰ THẬT trong project con.
  *
  * Trạng thái "editing" do một promise chạy nền cập nhật (xem jobs/textToVideo.ts).
@@ -51,6 +57,25 @@ const MAX_SCRIPT_CHARS = 20_000;
  * chiếu lại với file output của project con - rẻ (một lần đọc meta) và tự chữa.
  */
 function reconcile(meta: TextToVideoMeta): TextToVideoMeta {
+  // Trạng thái "đang chạy" mà không còn ai chạy: server khởi động lại giữa chừng
+  // (tsx watch nạp lại cũng tính). catch của request/job chết theo tiến trình nên
+  // không ai lùi trạng thái - trang chi tiết khóa MỌI ô nhập, kể cả nút xóa, mãi
+  // mãi. Lùi về đúng trạng thái mà catch của bước đó sẽ đặt.
+  if ((meta.status === "extracting" || meta.status === "scripting") && !inFlight.has(meta.id)) {
+    return patchTextToVideo(meta.id, {
+      status: "draft",
+      error: "Bước này bị dừng giữa chừng vì server khởi động lại - chạy lại bước đó.",
+    });
+  }
+  if (
+    (meta.status === "voicing" || meta.status === "building") &&
+    !db.hasActiveJobForProject(meta.id, "text-to-video")
+  ) {
+    return patchTextToVideo(meta.id, {
+      status: "failed",
+      error: "Job dựng bị dừng giữa chừng (server khởi động lại hoặc job bị hủy) - bấm dựng video để chạy lại.",
+    });
+  }
   if (meta.status !== "editing" || !meta.projectId) return meta;
   try {
     if (!projectExists(meta.projectId)) {
@@ -95,7 +120,9 @@ function uniqueId(name: string): string {
   const base = toKebabAscii(name) || "text-to-video";
   let id = base;
   let n = 2;
-  while (fs.existsSync(textToVideoDirOf(id))) id = `${base}-${n++}`;
+  // "con", "aux", "nul"... qua toKebabAscii vẫn ra nguyên chữ đó nhưng isKebabCase
+  // từ chối (tên thiết bị Windows) - phiên ghi ra đĩa được mà không bao giờ mở lại được
+  while (!isKebabCase(id) || fs.existsSync(textToVideoDirOf(id))) id = `${base}-${n++}`;
   return id;
 }
 
@@ -254,6 +281,7 @@ router.post("/:id/extract", async (req, res) => {
     throw new HttpError(400, "NO_URL", "Phiên này không có link bài viết để bóc.");
   }
 
+  inFlight.add(meta.id);
   patchTextToVideo(meta.id, { status: "extracting", error: null });
   try {
     const article = await extractArticleFromUrl(url);
@@ -276,6 +304,8 @@ router.post("/:id/extract", async (req, res) => {
     const message = err instanceof Error ? err.message : String(err);
     patchTextToVideo(meta.id, { status: "draft", error: message });
     throw err;
+  } finally {
+    inFlight.delete(meta.id);
   }
 });
 
@@ -349,6 +379,7 @@ router.post("/:id/script", async (req, res) => {
       ? body.model.trim()
       : meta.scriptModel;
 
+  inFlight.add(meta.id);
   patchTextToVideo(meta.id, { status: "scripting", error: null, scriptModel: model });
   try {
     const ai = await generateText({
@@ -377,6 +408,8 @@ router.post("/:id/script", async (req, res) => {
     const message = err instanceof Error ? err.message : String(err);
     patchTextToVideo(meta.id, { status: "draft", error: message });
     throw err;
+  } finally {
+    inFlight.delete(meta.id);
   }
 });
 
@@ -429,7 +462,7 @@ router.post("/:id/build", (req, res) => {
       `Phiên này đã tạo project "${meta.projectId}" rồi.`,
     );
   }
-  if (db.hasActiveJobForProject(meta.id)) {
+  if (db.hasActiveJobForProject(meta.id, "text-to-video")) {
     throw new HttpError(409, "JOB_RUNNING", "Phiên này đang dựng - đợi job hiện tại xong.");
   }
 

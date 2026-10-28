@@ -17,6 +17,7 @@ import {
   toKebabAscii,
   toRepoRel,
 } from "./util.js";
+import { ffmpegSafeArgs, ffprobeSafeArgs } from "./ffmpegSafe.js";
 
 /**
  * Kho giọng đã nhân bản.
@@ -122,7 +123,7 @@ async function probeSeconds(absFile: string): Promise<number> {
   try {
     r = await execFileCaptureAll(
       "ffprobe",
-      ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", absFile],
+      ffprobeSafeArgs(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", absFile]),
       { timeoutMs: 20_000 },
     );
   } catch (err) {
@@ -143,7 +144,7 @@ async function probeSeconds(absFile: string): Promise<number> {
 async function runFfmpeg(args: string[]): Promise<void> {
   let r: Awaited<ReturnType<typeof execFileCaptureAll>>;
   try {
-    r = await execFileCaptureAll("ffmpeg", ["-hide_banner", "-nostats", "-y", ...args], {
+    r = await execFileCaptureAll("ffmpeg", ffmpegSafeArgs(["-hide_banner", "-nostats", "-y", ...args]), {
       timeoutMs: 180_000,
     });
   } catch (err) {
@@ -337,6 +338,11 @@ export function patchClonedVoice(
 }
 
 export function removeClonedVoice(id: string): void {
+  // Soi id TRƯỚC mọi thao tác đĩa: existsSync trên "../.." là dò được đường dẫn
+  // nào tồn tại ngoài thư mục giọng (404 vs 400)
+  if (!isKebabCase(id)) {
+    throw new HttpError(400, "INVALID_VOICE_ID", `id giọng không hợp lệ: "${id}"`);
+  }
   const entries = readLibrary();
   const dir = path.join(paths.voicesDir, id);
   const found = entries.some((e) => e.id === id);
@@ -344,9 +350,6 @@ export function removeClonedVoice(id: string): void {
   // rác nằm lại vĩnh viễn vì không có đường nào khác để dọn.
   if (!found && !fs.existsSync(dir)) {
     throw new HttpError(404, "VOICE_NOT_FOUND", `Không tìm thấy giọng nhân bản "${id}"`);
-  }
-  if (!isKebabCase(id)) {
-    throw new HttpError(400, "INVALID_VOICE_ID", `id giọng không hợp lệ: "${id}"`);
   }
   try {
     fs.rmSync(dir, { recursive: true, force: true });

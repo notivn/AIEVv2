@@ -1,9 +1,9 @@
 ---
 name: ai-illustrations
-description: Generate illustrations with Gemini and composite them into the video being edited - how to pick the moments that need an image, write the prompt, call the /api/illustrations endpoint (images MUST match the selected Style Design), and composite into the composition. Read when the brief enables "Ảnh minh họa AI" (AI illustrations) or the user asks for generated illustrations for a video.
+description: Generate illustrations through the configured image provider (Gemini API, ChatGPT web account or Gemini web cookie - the server routes it) and composite them into the video being edited - how to pick the moments that need an image, write the prompt, call the /api/illustrations endpoint (images MUST match the selected Style Design), and composite into the composition. Read when the brief enables "Ảnh minh họa AI" (AI illustrations) or the user asks for generated illustrations for a video.
 ---
 
-# AI Illustrations - Claude directs, Gemini draws, brand stays consistent
+# AI Illustrations - Claude directs, the image provider draws, brand stays consistent
 
 ## ⛔ GATE - read before anything else
 
@@ -16,8 +16,29 @@ already has: assets in `assets/`, brand logos, and HyperFrames scenes (typograph
 
 The server enforces this too - with the switch off the endpoint returns `409 ILLUSTRATIONS_DISABLED` before it
 spends anything. **Why this section exists:** the edit prompt used to stay silent when the switch was off, this
-skill got read anyway, and finished videos came back full of Gemini images the user had explicitly turned off.
+skill got read anyway, and finished videos came back full of AI images the user had explicitly turned off.
 A silent prompt is not permission.
+
+**Never route around the switch.** `POST /api/projects/:id/generate-image` is the editor's manual "AI filler"
+button for the human user, not a tool for you - it returns `409 AGENT_BUSY` while your session runs. Do not
+call it, and do not call a provider (Gemini API, the ChatGPT/Gemini gateways on 127.0.0.1) directly either.
+
+## Image providers - the server picks, you do not
+
+Every image goes through `POST /api/illustrations`; the server routes it to one of three providers
+(`apps/server/src/imageProviders/`):
+
+| Provider id | What it is | Cost / speed |
+|---|---|---|
+| `gemini-api` | Gemini API key (`GEMINI_API_KEY`) | ~$0.05-0.07 per image, ~10-20s |
+| `chatgpt-web` | the user's ChatGPT account, via the local chatgpt2api gateway | uses the account's limited image quota, 30s to several minutes |
+| `gemini-web` | the user's Google account cookie, via the gemini-webapi worker | uses the account's quota, 20-90s; visible Gemini sparkle is removed automatically |
+
+`auto` = the default chosen on the Connections page, then the other configured providers in turn (a failing
+provider falls through to the next). The edit prompt's "Nhà cung cấp ảnh" (image provider) line tells you
+whether to pass `model` and with which value - follow it literally; when it says not to pass `model`, omit it.
+Whatever the provider, the server builds the final prompt the same way (Style Design + video style) and
+cover-fits the result to the exact frame size, so your prompt never changes per provider.
 
 ## Directing principles
 
@@ -25,7 +46,8 @@ A silent prompt is not permission.
    choose 2-5 points where an illustration explains more than the words do: abstract concepts, key numbers,
    a product/setting being mentioned, before-vs-after comparisons. DO NOT illustrate talking-head passages
    that already hold attention on their own.
-2. **Each image costs ~$0.05-0.07** - treat it as real money. A short video (<60s) usually needs only 2-4 images.
+2. **Every image costs something** - real money on the Gemini API (~$0.05-0.07), or scarce daily quota and
+   minutes of waiting on a web account. A short video (<60s) usually needs only 2-4 images.
 3. **Illustrations are BACKGROUND visuals - no text by default.** The server already bans text in the prompt;
    numbers and labels are placed on top by HyperFrames/Remotion (correct font + brand color, no typos). The only
    exception: the brief enables "Ảnh có chữ" (`illustrationText`) or the edit prompt says "ĐƯỢC PHÉP CÓ CHỮ"
@@ -44,8 +66,7 @@ curl -s -X POST http://localhost:6869/api/illustrations \
     "projectId": "<id of the video project>",
     "name": "khai-niem-mcp",
     "prompt": "3D illustration of interconnected glass puzzle pieces forming a network, representing an integration protocol",
-    "aspect": "9:16",
-    "model": "<model from the brief, omit the field to use the default>",
+    "model": "<only if the edit prompt's image-provider line says so - otherwise omit the field>",
     "styleId": "<styleId from the STYLE DESIGN section of the edit prompt - MUST be passed when present>",
     "description": "Minh họa khái niệm MCP - ghép vào lúc 12.5s khi nói về kết nối dữ liệu"
   }'
@@ -69,8 +90,19 @@ curl -s -X POST http://localhost:6869/api/illustrations \
   must not sit on one static background. Each image still needs its own content-specific prompt; do NOT
   mass-generate near-identical variations. When the prompt says "AI tự quyết" (density null), keep the old
   behavior: pick only the moments that genuinely need an illustration.
-- `aspect` must match the video frame (vertical video -> "9:16"). If it fails with a missing GEMINI_API_KEY, tell
-  the user to enter the key on the "Kết nối" (Connections) tab and move on to another part of the video - do not get stuck.
+- **Omit `aspect`**: the server then cover-fits the image to the project's exact `width x height`. Pass
+  `aspect` ("9:16" | "16:9" | "1:1" | "4:5") only when one image is meant for a box with a different shape
+  (e.g. a square card inside a vertical video).
+- The response carries `provider` (which one actually drew it). Errors and what to do:
+  `NO_IMAGE_PROVIDER` / `NO_GEMINI_KEY` / `GATEWAY_NOT_INSTALLED` (nothing configured),
+  `GATEWAY_AUTH_FAILED` (token/cookie expired), `GATEWAY_RATE_LIMITED` (quota used up) -> say so in the final
+  report (the user fixes it on the "Kết nối" (Connections) tab) and build that moment with HyperFrames instead -
+  do not get stuck and do not retry in a loop. `GATEWAY_TIMEOUT` / `GATEWAY_FAILED` -> retry once with a
+  reworded prompt, then move on. A web-account image can take minutes: use a long curl timeout
+  (`--max-time 900`) and generate images one at a time, not in parallel. The server enforces this too:
+  ChatGPT web / Gemini web images run through a per-gateway queue (one image at a time, plus a
+  configurable pause between images - "Kết nối" tab, default 10s), so a parallel call just waits its turn
+  and a slow response is the queue, not a hang - do not retry it.
 - `description` MUST always state which point the image illustrates + the second it is expected to be composited at.
 
 ## Images with text (allowText)
@@ -81,9 +113,9 @@ or the user explicitly asks for it. How to do it:
 - Pass `"allowText": true` in the POST /api/illustrations body. If the field is missing the server falls back to
   the project's `brief.illustrationText` - but NEVER rely on that, pass it explicitly.
 - In the prompt, spell out the EXACT Vietnamese text you want to appear (3-6 words, correct spelling, all diacritics),
-  e.g. `... with the exact Vietnamese headline "TĂNG TRƯỞNG 300%"`. Never let Gemini invent the text itself.
+  e.g. `... with the exact Vietnamese headline "TĂNG TRƯỞNG 300%"`. Never let the model invent the text itself.
 - **You MUST verify the spelling after generation**: Read the image file and inspect every character and Vietnamese
-  diacritic. Gemini often mangles diacritics (Ề->E, ữ->u) or adds garbage text. If it is wrong -> regenerate (rephrase
+  diacritic. Image models (all three providers) often mangle diacritics (Ề->E, ữ->u) or add garbage text. If it is wrong -> regenerate (rephrase
   the prompt if it keeps failing), or give up after 2-3 attempts and generate a text-free version (`allowText:false`),
   then let HyperFrames/Remotion place the text as usual.
 - If the text is already inside the image, DO NOT overlay duplicate text with HyperFrames/Remotion.
@@ -103,13 +135,13 @@ If the selected Style Design has a logo, the real file is copied into the projec
 LOGO block. Rules:
 
 - Insert **that exact image file** (`<img>` in a HyperFrames scene, or `srcImage`/overlay in Remotion).
-- Never redraw the logo in CSS/SVG/shapes, never ask Gemini for it, and never substitute the brand
+- Never redraw the logo in CSS/SVG/shapes, never ask the image model for it, and never substitute the brand
   name set in a font. A typeset name where a logo belongs is a brand violation, not a fallback.
 - Only size and position may change: no distortion, recolouring, rotation, cropping, or added
   borders/shadows on the mark itself.
 - If it genuinely cannot be placed, say so in the final report instead of improvising.
 
-**Symptom:** Gemini renders an invented logo - a glossy monogram on a wall, a mark on a t-shirt or phone screen.
+**Symptom:** the image model renders an invented logo - a glossy monogram on a wall, a mark on a t-shirt or phone screen.
 **Cause:** the scene prompt mentioned a logo, which flipped the permissive "decorative brand logos are allowed"
 clause on. Adding a prohibition alongside it is **not enough** - measured: with both clauses present the model
 followed the permissive one and drew an "N" monogram.
@@ -134,11 +166,12 @@ by itself: any brand a video mentions gets fetched once and stays for every late
 that mentions it.
 
 - Need Facebook / TikTok / Claude / Gemini in a scene? **Use the file.** Never redraw a third-party logo and
-  never ask Gemini for one; a wrong brand mark is spotted instantly.
+  never ask an image model for one; a wrong brand mark is spotted instantly.
 - **Copy the file into the project's `assets/` first**, then reference it. Remotion only stages paths inside
   the project, so pointing straight at `assets/brand-logos/` renders a 404.
 - The SVGs are single-colour (black by default). To recolour, inline the SVG and set `fill` - use the official
   hex from `library.json`, or plain white/black when the background demands it.
+- (Same rule for every image provider: never ask an image model to draw a third-party logo.)
 - **Brand not in the library? Fetch it, do not skip it.** `POST http://localhost:6869/api/brand-logos`
   with `{"name":"OpenAI"}`. The server looks in Simple Icons, then Wikidata's P154 "logo image" property,
   downloads the official file into `assets/brand-logos/`, and returns `relPath`. 201 = newly fetched,
@@ -161,3 +194,10 @@ that mentions it.
   affected; one concept needed 2 retries. So you MUST Read every generated PNG before compositing. On failure,
   regenerate with a reworded prompt (same content, different sentence structure) - that was enough in every
   observed case. Delete the bad files so they are not composited by accident.
+- **Web-account providers ignore exact sizes.** ChatGPT web and Gemini web have no real size parameter - they
+  return roughly the requested ratio. The server cover-fits every image to the exact frame with ffmpeg, which
+  can crop a little off the long edge: keep important detail away from the edges (the composition rules the
+  server adds already ask for that).
+- **Gemini web may answer with text instead of an image** ("I can't create images for you right now"): that is
+  a signed-out/expired cookie or a region without image generation - the server reports it as
+  `GATEWAY_AUTH_FAILED`/`GATEWAY_FAILED`; tell the user, do not rephrase the prompt over and over.

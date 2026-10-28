@@ -10,6 +10,7 @@
 
 import { createContext, useContext } from "react";
 import type { Timeline } from "@/lib/api";
+import type { LockableTrack } from "./locks";
 import type { OpsContext, Selection } from "./ops";
 import type { PlaybackStore } from "./playback";
 
@@ -28,6 +29,9 @@ export interface EditorApi {
   vertical: boolean;
   ops: OpsContext;
   readOnly: boolean;
+  /** Track đang khóa - không kéo/sửa/thêm được (edit() tự chặn, xem locks.ts) */
+  locks: ReadonlySet<LockableTrack>;
+  toggleLock: (track: LockableTrack) => void;
   selection: Selection | null;
   edit: (apply: (timeline: Timeline) => Timeline, options?: EditOptions) => void;
   select: (selection: Selection | null) => void;

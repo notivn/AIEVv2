@@ -8,6 +8,7 @@ import {
 } from "remotion";
 import type { HighlightCue } from "../manifest";
 import { useMediaSrc } from "../media";
+import { cueBoxAttrs, cueOffsetCss, cueScaleOf } from "./cueTransform";
 import { fadeInOut } from "./fade";
 import { useVietnameseFont, VIETNAMESE_FONT_FAMILY, vietnameseFontFaceCss } from "./vietnameseFont";
 
@@ -40,8 +41,9 @@ const ACCENTS = {
   cool: { text: "#37bdf8", glow: "rgba(55,189,248,0.45)", bar: "linear-gradient(90deg,#37bdf8,#8fd9ff)" },
 } as const;
 
-const Cue: React.FC<{ cue: HighlightCue; raised: boolean }> = ({
+const Cue: React.FC<{ cue: HighlightCue; index: number; raised: boolean }> = ({
   cue,
+  index,
   raised,
 }) => {
   const frame = useCurrentFrame(); // 0 tại cue.from (đang trong <Sequence>)
@@ -102,8 +104,9 @@ const Cue: React.FC<{ cue: HighlightCue; raised: boolean }> = ({
       }}
     >
       <div
+        {...cueBoxAttrs("overlay", index)}
         style={{
-          transform: `translateY(${drift}px) scale(${pop})`,
+          transform: `${cueOffsetCss(cue.transform, width, height)}translateY(${drift}px) scale(${pop * cueScaleOf(cue.transform)})`,
           // Pop từ mép neo: thẻ trên (main) nở từ trên, thẻ đáy nở từ dưới.
           transformOrigin: main ? "center top" : "center bottom",
           // Liquid Glass: blur + viền trắng mờ bằng box-shadow inset (KHÔNG
@@ -203,7 +206,7 @@ export const HighlightTrack: React.FC<{
           from={cue.from}
           durationInFrames={cue.durationInFrames}
         >
-          <Cue cue={cue} raised={raised} />
+          <Cue cue={cue} index={index} raised={raised} />
         </Sequence>
       ))}
     </>

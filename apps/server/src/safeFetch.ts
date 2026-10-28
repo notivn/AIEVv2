@@ -109,18 +109,56 @@ function isPrivateV4(ip: string): boolean {
   });
 }
 
+/**
+ * Bung IPv6 về đủ 8 nhóm số. PHẢI so trên số chứ không trên chuỗi: WHATWG URL
+ * chuẩn hóa `[::ffff:127.0.0.1]` thành `[::ffff:7f00:1]` (dạng hex), và
+ * `2001:0000::1` thành `2001::1` - so chuỗi kiểu cũ để lọt cả hai (Teredo và
+ * IPv4-mapped trỏ về loopback).
+ */
+function expandV6(a: string): number[] | null {
+  let s = a;
+  // Đuôi IPv4 chấm (::ffff:1.2.3.4) → hai nhóm hex
+  const tail = s.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  if (tail) {
+    if (net.isIP(tail[1]) !== 4) return null;
+    const n = ip4ToInt(tail[1]);
+    s = s.slice(0, -tail[1].length) + `${(n >>> 16).toString(16)}:${(n & 0xffff).toString(16)}`;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const rest = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = 8 - head.length - rest.length;
+  if (halves.length === 1 ? head.length !== 8 : fill < 0) return null;
+  const groups = [...head, ...Array<string>(halves.length === 2 ? fill : 0).fill("0"), ...rest];
+  const nums = groups.map((g) => parseInt(g, 16));
+  return nums.length === 8 && nums.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffff)
+    ? nums
+    : null;
+}
+
 function isPrivateV6(ip: string): boolean {
   const a = ip.toLowerCase().replace(/^\[|\]$/g, "").split("%")[0];
-  if (a === "::" || a === "::1") return true;
-  // IPv4-mapped / IPv4-compatible: ::ffff:127.0.0.1 vẫn nối tới loopback
-  const m = a.match(/^::(ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
-  if (m) return isPrivateV4(m[2]);
-  if (a.startsWith("64:ff9b::")) return true; // NAT64 - bọc được IPv4 nội bộ
-  if (/^f[cd]/.test(a)) return true; // fc00::/7 unique local
-  if (/^fe[89ab]/.test(a)) return true; // fe80::/10 link local
-  if (/^ff/.test(a)) return true; // ff00::/8 multicast
-  if (a.startsWith("2002:")) return true; // 6to4 - bọc được IPv4 nội bộ
-  if (a.startsWith("2001:0:") || a.startsWith("2001:db8")) return true;
+  const g = expandV6(a);
+  if (!g) return true; // không phân tích được → coi như bị chặn
+  const v4 = (hi: number, lo: number): string =>
+    [hi >>> 8, hi & 0xff, lo >>> 8, lo & 0xff].join(".");
+  const zeros = (n: number): boolean => g.slice(0, n).every((x) => x === 0);
+  // :: và ::1
+  if (zeros(7) && (g[7] === 0 || g[7] === 1)) return true;
+  // IPv4-mapped ::ffff:a.b.c.d / IPv4-compatible ::a.b.c.d / IPv4-translated ::ffff:0:a.b.c.d
+  if (zeros(5) && g[5] === 0xffff) return isPrivateV4(v4(g[6], g[7]));
+  if (zeros(6)) return isPrivateV4(v4(g[6], g[7]));
+  if (zeros(4) && g[4] === 0xffff && g[5] === 0) return isPrivateV4(v4(g[6], g[7]));
+  if (g[0] === 0x64 && g[1] === 0xff9b) return true; // NAT64 64:ff9b::/96 + 64:ff9b:1::/48
+  if (g[0] === 0x0100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true; // 100::/64 discard
+  if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
+  if ((g[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link local
+  if ((g[0] & 0xffc0) === 0xfec0) return true; // fec0::/10 site local (cũ)
+  if ((g[0] & 0xff00) === 0xff00) return true; // ff00::/8 multicast
+  if (g[0] === 0x2002) return true; // 6to4 - bọc được IPv4 nội bộ
+  if (g[0] === 0x2001 && (g[1] === 0 || g[1] === 0x0db8)) return true; // Teredo, tài liệu
+  if (g[0] === 0x2001 && (g[1] & 0xfff0) === 0x0010) return true; // ORCHID
   return false;
 }
 

@@ -24,11 +24,27 @@ function assertValidName(name: string): void {
   }
 }
 
+/**
+ * gray-matter mặc định có engine `javascript`: frontmatter mở bằng `---js` được
+ * `eval` thẳng trong tiến trình server (có cả `require`) - nội dung SKILL.md gửi
+ * lên, hay do AI soạn ở /generate, là chạy được lệnh tùy ý. Chặn hẳn engine đó.
+ * Truyền options còn tắt luôn cache nội bộ của gray-matter (cache theo nội dung,
+ * không bao giờ dọn - mỗi lần PUT một nội dung mới là rò thêm bộ nhớ).
+ */
+const noEval = (): never => {
+  throw new Error("Frontmatter JavaScript không được hỗ trợ");
+};
+const MATTER_OPTS = { engines: { js: noEval, javascript: noEval } };
+
+function readMatter(content: string): Record<string, unknown> {
+  return matter(content, MATTER_OPTS).data as Record<string, unknown>;
+}
+
 /** Parse frontmatter - bắt buộc có name + description */
 function parseFrontmatter(content: string): { name: string; description: string } {
   let data: Record<string, unknown>;
   try {
-    data = matter(content).data as Record<string, unknown>;
+    data = readMatter(content);
   } catch {
     throw new HttpError(400, "INVALID_FRONTMATTER", "Frontmatter YAML không hợp lệ");
   }
@@ -233,7 +249,7 @@ router.post("/generate", async (req, res) => {
   let fmDescription = "";
   if (content) {
     try {
-      const data = matter(content).data as Record<string, unknown>;
+      const data = readMatter(content);
       fmName = typeof data.name === "string" ? data.name.trim() : "";
       fmDescription = typeof data.description === "string" ? data.description.trim() : "";
     } catch {
@@ -284,7 +300,7 @@ router.get("/", (_req, res) => {
       try {
         const stat = fs.statSync(file);
         const content = fs.readFileSync(file, "utf8");
-        const data = matter(content).data as Record<string, unknown>;
+        const data = readMatter(content);
         out.push({
           name: entry.name,
           description: typeof data.description === "string" ? data.description : "",

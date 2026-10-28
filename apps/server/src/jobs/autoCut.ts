@@ -15,7 +15,8 @@ import {
 import { planAutoCutSegments } from "../autoCutPlan.js";
 import { createChildProject, prepareEditSession, sceneAssetPath } from "../childProject.js";
 import { repoRoot } from "../config.js";
-import { geminiApiKey, generateBackground } from "../gemini.js";
+import { geminiApiKey } from "../gemini.js";
+import { generateImage, resolveProviders } from "../imageProviders/index.js";
 import type { ImageAspect } from "../imageMeta.js";
 import { projectAssetsDirOf, readMeta } from "../meta.js";
 import type { JobCtx } from "../queue.js";
@@ -400,8 +401,10 @@ async function prepareBackground(
     ctx.log("[cut] Layout crop nên không cần nền - bỏ qua tạo nền Gemini.");
     return null;
   }
-  if (!geminiApiKey()) {
-    ctx.log("[warn] Chưa có GEMINI_API_KEY - dùng nền mờ từ chính video thay cho nền Gemini.");
+  // Nhà cung cấp ảnh theo mặc định ở trang Kết nối ("auto": Gemini API rồi tới
+  // gateway web đã cấu hình) - chưa cấu hình cái nào thì nền mờ như cũ
+  if (resolveProviders(null, null).chain.length === 0) {
+    ctx.log("[warn] Chưa cấu hình nhà cung cấp tạo ảnh nào - dùng nền mờ từ chính video thay cho nền AI.");
     return null;
   }
 
@@ -411,24 +414,28 @@ async function prepareBackground(
     return outFile;
   }
 
-  ctx.progress(5, "Gemini tạo ảnh nền");
+  ctx.progress(5, "AI tạo ảnh nền");
   try {
-    await generateBackground({
+    const { provider } = await generateImage({
       prompt:
         "A calm, non-distracting backdrop for a talking-head video clip that will be placed in the middle of the frame. " +
         "Keep the central band simple and low contrast so the video on top stays the focus.",
       kind: "background",
       aspect: imageAspectOf(target),
+      // Đúng kích thước khung đích - nền cover-fit khít, không phải scale lại lúc ghép
+      width: target.width,
+      height: target.height,
       design: getStyle(meta.output.styleId),
       outFile,
       usageProjectId: meta.id,
       allowText: false, // nền tuyệt đối không có chữ - chữ do project con đặt sau
+      onLog: (l) => ctx.log(l),
     });
-    ctx.log(`[cut] Đã tạo nền Gemini: ${toRepoRel(outFile)}`);
+    ctx.log(`[cut] Đã tạo nền AI (${provider}): ${toRepoRel(outFile)}`);
     return outFile;
   } catch (err) {
     ctx.log(
-      `[warn] Tạo nền Gemini thất bại (${err instanceof Error ? err.message : String(err)}) - ` +
+      `[warn] Tạo nền AI thất bại (${err instanceof Error ? err.message : String(err)}) - ` +
         "rơi về nền mờ từ chính video.",
     );
     return null;

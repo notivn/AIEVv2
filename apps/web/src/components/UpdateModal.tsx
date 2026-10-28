@@ -40,6 +40,7 @@ import {
   applyUpdate,
   checkUpdate,
   getUpdateLog,
+  type UpdateLog,
   type UpdateStatus,
   type UpdateStep,
 } from "@/lib/api";
@@ -91,6 +92,26 @@ function newLinesSince(baseline: string[] | null, lines: string[]): string[] {
   return lines;
 }
 
+/**
+ * Phần log của LẦN CHẠY NÀY, ưu tiên mốc lần chạy server trả về.
+ * Server đã cắt log từ dòng "bắt đầu cập nhật" của lần chạy CUỐI và trả nguyên
+ * văn dòng đó ở `startedAt`: khác mốc cũ = cả `lines` là của lần này, trùng =
+ * lần này chưa ghi dòng nào.
+ * VÌ SAO không chỉ dùng newLinesSince: log nào cũng kết thúc bằng khung
+ * transcript của PowerShell ("**********************"), nên dòng neo của log cũ
+ * mọc lại ngay khi lần này gọi Stop-Transcript - newLinesSince cắt mất cả dòng
+ * [LOI] lẫn toàn bộ log, popup quay vòng tới hết ALIVE_TIMEOUT rồi báo "quá giờ".
+ * Log không có mốc (script cũ) thì lùi về cách neo dòng như trước.
+ */
+function freshLines(
+  log: UpdateLog,
+  baselineStart: string | null,
+  baseline: string[] | null
+): string[] {
+  if (log.startedAt) return log.startedAt === baselineStart ? [] : log.lines;
+  return newLinesSince(baseline, log.lines);
+}
+
 /** Bước gần nhất suy từ mốc `[STEP] <tên>` script ghi vào log. */
 function stepFromLines(lines: string[]): UpdateStep | null {
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -140,6 +161,8 @@ export function UpdateModal({
   const [showLog, setShowLog] = useState(false);
 
   const baselineRef = useRef<string[] | null>(null);
+  /** Dòng mốc "bắt đầu cập nhật" (`startedAt`) của lần chạy CŨ - xem freshLines. */
+  const baselineStartRef = useRef<string | null>(null);
   const startRef = useRef(0);
   const mountedRef = useRef(true);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
@@ -183,7 +206,7 @@ export function UpdateModal({
     try {
       const log = await getUpdateLog(FINAL_TAIL);
       if (!mountedRef.current) return;
-      setLines(newLinesSince(baselineRef.current, log.lines));
+      setLines(freshLines(log, baselineStartRef.current, baselineRef.current));
     } catch {
       // Không đọc được log cuối - vẫn coi là xong vì server đã sống lại
     }
@@ -216,7 +239,7 @@ export function UpdateModal({
         try {
           const log = await getUpdateLog(LOG_TAIL);
           if (!alive) return;
-          const fresh = newLinesSince(baselineRef.current, log.lines);
+          const fresh = freshLines(log, baselineStartRef.current, baselineRef.current);
           setLines(fresh);
           // Ưu tiên bước suy từ dòng MỚI; chỉ tin `step` của server khi không
           // chụp được log cũ (không có mốc để lọc log của lần chạy trước).
@@ -298,8 +321,10 @@ export function UpdateModal({
     try {
       const before = await getUpdateLog(2000);
       baselineRef.current = before.exists ? before.lines : [];
+      baselineStartRef.current = before.exists ? before.startedAt : null;
     } catch {
       baselineRef.current = null;
+      baselineStartRef.current = null;
     }
     try {
       await applyUpdate();
@@ -347,7 +372,9 @@ export function UpdateModal({
       open={open}
       title={title}
       onClose={onClose}
-      dismissible={!running}
+      // Cả lúc đang gửi lệnh (`starting`): đóng được ở nhịp đó thì apply vẫn
+      // chạy tiếp, server tắt hẳn mà popup theo dõi đã biến mất
+      dismissible={!running && !starting}
       footer={renderFooter()}
     >
       {phase === "confirm" && renderConfirm()}
@@ -406,7 +433,7 @@ export function UpdateModal({
     }
     return (
       <>
-        <Button variant="secondary" onClick={onClose}>
+        <Button variant="secondary" onClick={onClose} disabled={starting}>
           {t("update.later")}
         </Button>
         <Button onClick={onApply} disabled={starting}>

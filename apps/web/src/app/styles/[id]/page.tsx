@@ -349,10 +349,17 @@ export default function StyleDetailPage() {
     setFontDl((m) => ({ ...m, [slot]: { busy: true } }));
     try {
       const s = await styleFontGoogle(styleId, slot, family);
-      // Chỉ merge phần server đổi - không clobber các field đang sửa dở
+      // Chỉ merge phần server đổi - không clobber các field đang sửa dở. Server
+      // chỉ đổi fonts[slot]: lấy cả `s.fonts` thì tên font đang gõ dở (chưa lưu)
+      // ở slot KIA bị đè về bản đã lưu.
       setStyle((cur) =>
         cur
-          ? { ...cur, fonts: s.fonts, fontFiles: s.fontFiles, updatedAt: s.updatedAt }
+          ? {
+              ...cur,
+              fonts: { ...cur.fonts, [slot]: s.fonts[slot] },
+              fontFiles: s.fontFiles,
+              updatedAt: s.updatedAt,
+            }
           : s
       );
       setFontDl((m) => ({ ...m, [slot]: {} }));
@@ -714,7 +721,7 @@ export default function StyleDetailPage() {
                           >
                             <Upload size={13} strokeWidth={2} />
                             {fontBusy === slot
-                              ? t("styleDetail.downloading")
+                              ? t("common.uploading")
                               : t("styleDetail.upload-file")}
                           </Button>
                           {fileName && (

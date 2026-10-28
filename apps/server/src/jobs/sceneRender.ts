@@ -52,6 +52,18 @@ export async function runSceneRender(ctx: JobCtx): Promise<void> {
     const finalRel =
       typeof scene.render === "string" && scene.render ? scene.render : `renders/${scene.id}.mp4`;
     const outRel = draft ? finalRel.replace(/\.mp4$/i, ".draft.mp4") : finalRel;
+    // meta.json do agent/người dùng ghi: src/render/id kiểu "../../start/start.bat"
+    // sẽ cho render ghi đè file ngoài project; src bắt đầu bằng "-" thành cờ CLI
+    const insideProject = (rel: string): boolean =>
+      path.resolve(projectDir, rel).startsWith(path.resolve(projectDir) + path.sep);
+    if (
+      String(scene.src).startsWith("-") ||
+      !insideProject(String(scene.src)) ||
+      !insideProject(outRel) ||
+      !insideProject(path.join("renders", ".tmp", `${ctx.job.id}-${scene.id}.mp4`))
+    ) {
+      throw new Error(`Scene "${scene.id}": src/render phải là đường dẫn nằm trong project`);
+    }
     ensureDir(path.dirname(path.join(projectDir, outRel)));
     // File tạm theo job + scene (đuôi .mp4 để hyperframes chọn đúng định dạng);
     // thư mục ẩn nên không lẫn vào danh sách render/asset nào

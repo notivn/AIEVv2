@@ -28,7 +28,28 @@ const whitelist: Record<string, string> = {
 };
 
 /** Đuôi file KHÔNG bao giờ được trình duyệt render như tài liệu same-origin */
-const FORCE_DOWNLOAD_EXT = new Set([".html", ".htm", ".xhtml", ".xml", ".svgz"]);
+const FORCE_DOWNLOAD_EXT = new Set([
+  ".html",
+  ".htm",
+  ".shtml", // mime-types trả text/html
+  ".xhtml",
+  ".xht",
+  ".xml",
+  ".xsl",
+  ".xslt",
+  ".svgz",
+]);
+
+/**
+ * Mở TRỰC TIẾP một file /media (gõ URL, bấm link) là nó thành tài liệu trong
+ * origin của dashboard - nơi localStorage giữ token chính. Danh sách đuôi ở trên
+ * không bao giờ đủ (rss/atom/mathml/rdf... đều là XML trình duyệt render được và
+ * chạy được <script> theo namespace XHTML), nên mọi file đều kèm CSP sandbox:
+ * không ảnh hưởng gì khi file được nạp làm ảnh/video/font/fetch, chỉ khóa script
+ * khi nó bị render như một trang. Trừ PDF: trình xem PDF của Chrome bị chặn hẳn
+ * dưới sandbox, mà PDF không chạy script trong origin trang.
+ */
+const SANDBOX_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 for (const [prefix, dir] of Object.entries(whitelist)) {
   router.use(
@@ -45,14 +66,10 @@ for (const [prefix, dir] of Object.entries(whitelist)) {
           // index.html của composition, XML… - tải về, không chạy như trang web
           res.setHeader("Content-Type", "application/octet-stream");
           res.setHeader("Content-Disposition", "attachment");
-        } else if (ext === ".svg") {
-          // SVG vẫn phải hiển thị được trong <img> (logo Style Design) nên giữ
-          // đúng MIME, nhưng khóa mọi script/nhúng khi bị mở trực tiếp.
-          res.setHeader(
-            "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-          );
         }
+        // SVG vẫn phải hiển thị được trong <img> (logo Style Design) nên giữ
+        // đúng MIME - CSP này khóa script/nhúng khi bị mở trực tiếp.
+        if (ext !== ".pdf") res.setHeader("Content-Security-Policy", SANDBOX_CSP);
       },
     }),
   );

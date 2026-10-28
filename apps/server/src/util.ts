@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import type { Request } from "express";
-import { apiToken, childEnv, repoRoot } from "./config.js";
+import { WEB_ORIGINS, apiToken, childEnv, repoRoot } from "./config.js";
+import { ffprobeSafeArgs } from "./ffmpegSafe.js";
 
 /**
  * Lỗi HTTP có mã - error handler ở index.ts sẽ trả { error: { code, message } }.
@@ -30,29 +31,61 @@ export function nowIso(): string {
 }
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+/** Tên host hợp lệ của một request loopback thật (header Host, đã bỏ cổng) */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Header mà proxy (Next rewrite, cloudflared...) gắn vào request chuyển tiếp */
+const PROXY_HEADERS = [
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-port",
+  "x-forwarded-proto",
+  "forwarded",
+  "x-real-ip",
+  "cf-connecting-ip",
+];
 
 /**
  * Request đến TRỰC TIẾP từ chính máy chủ (dashboard/agent/CLI trên localhost)?
  *
- * Điều kiện: socket là loopback VÀ không có bất kỳ header `x-forwarded-*` nào.
- * Next.js (proxy /api, /media của web 6868) LUÔN set x-forwarded-host /
- * x-forwarded-port / x-forwarded-for cho mọi request nó chuyển tiếp
- * (base-server.js: `req.headers['x-forwarded-host'] ??= ...`), và client không
- * gỡ được các header đó - nên mọi request đi qua proxy (kể cả từ LAN hay
- * Cloudflare Tunnel) đều KHÔNG được coi là local, dù socket là 127.0.0.1.
+ * Phải đủ CẢ bốn điều kiện:
+ * 1. Socket là loopback.
+ * 2. KHÔNG có header proxy nào - xét SỰ CÓ MẶT, không xét giá trị. Proxy rewrite
+ *    của Next 16 (router-server → httpxy) chỉ gắn MỘT header
+ *    `x-forwarded-host: <Host của client>`, không có x-forwarded-for. ĐÃ TÁI HIỆN:
+ *    máy LAN gửi `GET /api/health HTTP/1.0` không kèm Host (hoặc `Host:` rỗng)
+ *    tới :6868 → header tới đây là chuỗi RỖNG, bản cũ kiểm bằng truthy nên coi là
+ *    local và trao luôn token chính.
+ * 3. Header Host là localhost/127.0.0.1/[::1] - chặn DNS rebinding: trang độc
+ *    trỏ tên miền của nó về 127.0.0.1 thì socket đúng là loopback, nhưng Host
+ *    vẫn là tên miền kẻ tấn công.
+ * 4. Không phải request do trình duyệt gửi hộ một trang KHÁC (CSRF): có Origin
+ *    thì phải đúng origin dashboard; có Sec-Fetch-Site thì không được là
+ *    cross-site. Website bất kỳ vẫn POST text/plain hay multipart tới
+ *    http://127.0.0.1:6869 được mà không cần preflight (bật tunnel, chạy cập
+ *    nhật, upload...). curl/agent/Node không gửi hai header này nên không ảnh hưởng.
  */
 export function isLocalRequest(req: Request): boolean {
-  if (
-    req.headers["x-forwarded-for"] ||
-    req.headers["x-forwarded-host"] ||
-    req.headers["x-forwarded-port"] ||
-    req.headers["x-forwarded-proto"] ||
-    req.headers["cf-connecting-ip"]
-  ) {
-    return false;
-  }
+  if (PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) return false;
   const addr = req.ip || req.socket.remoteAddress || "";
-  return LOOPBACK.has(addr);
+  if (!LOOPBACK.has(addr)) return false;
+  const host = (req.headers.host ?? "").toLowerCase().replace(/:\d+$/, "");
+  if (!LOOPBACK_HOSTS.has(host)) return false;
+  const origin = req.headers.origin;
+  if (origin !== undefined && !WEB_ORIGINS.includes(origin)) return false;
+  return req.headers["sec-fetch-site"] !== "cross-site";
+}
+
+/**
+ * Cookie `aiev_token` chỉ được dùng cho request ĐỌC (GET/HEAD - img/video/
+ * EventSource/link tải về, thứ không gắn được header). Cookie không phân biệt
+ * cổng: mọi trang trên localhost (HyperFrames Studio :3002 chạy JS composition
+ * do agent viết, Remotion Studio, dev server khác...) đều khiến trình duyệt gửi
+ * kèm nó. Request GHI phải mang header `x-aiev-token` - trang khác origin không
+ * gắn được header đó nếu không qua preflight CORS.
+ */
+export function cookieAuthAllowed(req: Request): boolean {
+  return req.method === "GET" || req.method === "HEAD";
 }
 
 /** So sánh chuỗi bí mật theo thời gian hằng - tránh timing attack đoán token */
@@ -89,15 +122,21 @@ export function hasMasterToken(req: Request): boolean {
   if (!token) return false;
   const header = req.headers["x-aiev-token"];
   if (typeof header === "string" && secretEquals(header, token)) return true;
-  if (secretEquals(cookieValue(req, "aiev_token"), token)) return true;
+  if (cookieAuthAllowed(req) && secretEquals(cookieValue(req, "aiev_token"), token)) return true;
   const t = req.query?.t;
   return typeof t === "string" && secretEquals(t, token);
 }
 
 const KEBAB_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * Tên thiết bị dành riêng của Windows - `video-projects/nul` không phải thư mục
+ * mà là thiết bị, nên id kiểu này hỏng ngầm (409/500 khó hiểu) trên Windows.
+ */
+const WINDOWS_RESERVED_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
+
 export function isKebabCase(s: string): boolean {
-  return KEBAB_RE.test(s);
+  return KEBAB_RE.test(s) && !WINDOWS_RESERVED_RE.test(s);
 }
 
 /** Ép chuỗi (tên file, id) về ASCII kebab-case - bỏ dấu tiếng Việt, đ→d */
@@ -430,7 +469,7 @@ export async function ffprobeDurationMs(absFile: string): Promise<number | null>
   try {
     const out = await execFileCapture(
       "ffprobe",
-      ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", absFile],
+      ffprobeSafeArgs(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", absFile]),
       { timeoutMs: 15_000 },
     );
     const sec = parseFloat(out.trim());

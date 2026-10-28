@@ -216,7 +216,30 @@ export const AUTO_CUT_LEVELS = ["natural", "default", "tight"] as const;
 export type TrimAggressiveness = (typeof AUTO_CUT_LEVELS)[number];
 
 /** Kịch bản edit của project - AI đọc phần này khi bắt đầu edit. */
+/**
+ * Video dựng từ đâu (cột "Nguồn"): video = edit file tải lên (mặc định), article =
+ * kể lại bài viết từ link, request = theo yêu cầu bằng chữ - hai loại sau dựng
+ * video motion graphics, không có footage.
+ */
+export type SourceKind = "video" | "article" | "request";
+
+/**
+ * Lồng tiếng cho nguồn article/request: none = không giọng, tts = AI đọc bằng
+ * ĐÚNG giọng `narrationVoice` (agent chỉ gửi kịch bản), file = giọng thu sẵn.
+ */
+export type NarrationMode = "none" | "tts" | "file";
+
 export interface Brief {
+  sourceKind: SourceKind;
+  /** Link bài viết (article) - bản bóc ở assets/source-article.md */
+  sourceUrl: string;
+  /** Yêu cầu / nội dung bằng chữ (request), tối đa 20.000 ký tự */
+  sourceText: string;
+  narrationMode: NarrationMode;
+  /** Giọng AI khi narrationMode = "tts" - cùng kiểu với Text to video */
+  narrationVoice: TextToVideoVoice;
+  /** File giọng thu sẵn, relPath trong project ("assets/...") */
+  narrationFile: string;
   sourceDescription: string;
   autoCut: boolean;
   /**
@@ -268,7 +291,16 @@ export interface Brief {
    * người que...). Hai thứ chồng lên nhau chứ không thay nhau.
    */
   videoStyleId: string | null;
+  /**
+   * Chế độ hoàn tất của phiên "Bắt đầu edit bằng AI": "draft" (mặc định của
+   * server) = AI dừng ở bản draft đã QC để người dùng duyệt; "final" = AI làm
+   * trọn tới video final. Tùy chọn để brief cũ / form khác không phải khai.
+   */
+  finishMode?: FinishMode;
 }
+
+/** Điểm dừng của phiên AI edit - xem `Brief.finishMode`. */
+export type FinishMode = "draft" | "final";
 
 /** Bảng màu của phong cách - xem ghi chú ở `VideoStyle.palette`. */
 export type VideoStylePalette = "brand" | "loose";
@@ -351,6 +383,24 @@ export interface Job {
 }
 
 export type JobWithLog = Job & { log: string };
+
+/**
+ * Job của một VIDEO project (render scene/assemble + auto-trim). Image project
+ * và các phiên (auto-cut, text-to-video, dịch) cũng sinh id từ tên ở thư mục
+ * riêng nên có thể trùng id với video project - lọc mỗi `projectId` là trang
+ * video project hiện job tạo ảnh/dịch của "demo" kia như job của chính nó.
+ */
+export function isVideoProjectJob(job: Job, projectId?: string): boolean {
+  if (
+    job.type === "image-gen" ||
+    job.type === "auto-cut" ||
+    job.type === "text-to-video" ||
+    job.type === "translate-video"
+  ) {
+    return false;
+  }
+  return projectId === undefined || job.projectId === projectId;
+}
 
 export interface Overview {
   /** Job đang chạy đầu tiên - giữ để tương thích, ưu tiên dùng `runningJobs`. */
@@ -787,9 +837,8 @@ export class ApiError extends Error {
  * Trang /m trên điện thoại KHÔNG dùng token này: nó đi bằng token phiên QR
  * (`?k=`) mà backend chỉ cho xem project + upload asset.
  */
+/** Khóa localStorage - script trước-paint ở app/layout.tsx ghi cùng khóa này */
 const TOKEN_KEY = "aiev_api_token";
-/** Tên cookie PHẢI khớp với middleware xác thực của backend (index.ts) */
-const TOKEN_COOKIE = "aiev_token";
 
 let apiToken: string | null = null;
 let tokenPromise: Promise<string | null> | null = null;
@@ -800,16 +849,22 @@ function uploadTokenFromUrl(): string {
   return new URLSearchParams(window.location.search).get("k") ?? "";
 }
 
-function persistToken(token: string): void {
+async function persistToken(token: string): Promise<void> {
   apiToken = token;
   try {
     window.localStorage.setItem(TOKEN_KEY, token);
   } catch {
     // Safari private mode… - vẫn dùng được token trong phiên này
   }
-  // Cookie để img/video/EventSource (không set header được) qua được middleware
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = `${TOKEN_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
+  // Cookie `aiev_token` để img/video/EventSource (không set header được) qua
+  // được middleware - do SERVER đặt (HttpOnly, SameSite=Strict): cookie không
+  // phân biệt cổng, đặt bằng document.cookie thì mọi trang khác trên localhost
+  // đọc được token. Same-origin qua proxy để cookie gắn đúng host đang mở.
+  try {
+    await fetch("/api/session", { method: "POST", headers: { "x-aiev-token": token } });
+  } catch {
+    // Mất mạng - fetch có header vẫn chạy; ảnh/video sẽ lấy lại cookie lần sau
+  }
 }
 
 async function ensureToken(): Promise<string | null> {
@@ -823,8 +878,9 @@ async function ensureToken(): Promise<string | null> {
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get("t");
     if (fromUrl) {
-      persistToken(fromUrl);
-      // Bỏ token khỏi thanh địa chỉ sau khi đã lưu (tránh lộ qua ảnh chụp/referrer)
+      // Thường script trước-paint ở layout.tsx đã cất token vào localStorage và
+      // gỡ ?t= rồi; tới được đây là localStorage hỏng - vẫn gỡ khỏi thanh địa chỉ
+      // (tránh lộ qua ảnh chụp/referrer/lịch sử) trước khi làm gì khác.
       params.delete("t");
       const qs = params.toString();
       window.history.replaceState(
@@ -832,12 +888,13 @@ async function ensureToken(): Promise<string | null> {
         "",
         window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash
       );
+      await persistToken(fromUrl);
       return fromUrl;
     }
     try {
       const stored = window.localStorage.getItem(TOKEN_KEY);
       if (stored) {
-        persistToken(stored); // set lại cookie (có thể đã hết hạn/bị xóa)
+        await persistToken(stored); // set lại cookie (có thể đã hết hạn/bị xóa)
         return stored;
       }
     } catch {
@@ -848,7 +905,7 @@ async function ensureToken(): Promise<string | null> {
       if (res.ok) {
         const body = (await res.json()) as { apiToken?: string };
         if (body?.apiToken) {
-          persistToken(body.apiToken);
+          await persistToken(body.apiToken);
           return body.apiToken;
         }
       }
@@ -885,6 +942,24 @@ function dropToken(): void {
   }
 }
 
+/**
+ * 401 này có phải middleware token AIEV từ chối không (code "UNAUTHORIZED")?
+ * 401 khác - vd GATEWAY_AUTH_FAILED khi phiên ChatGPT/cookie Gemini hết hạn -
+ * là lỗi thông tin đăng nhập BÊN NGOÀI: bỏ token rồi gửi lại thì mất token
+ * thật (mở từ xa qua tunnel không lấy lại được) và gateway bị gọi hai lần.
+ * Đọc trên bản clone để nhánh lỗi bên dưới vẫn đọc được body.
+ */
+async function isAccessTokenRejected(res: Response): Promise<boolean> {
+  try {
+    const body = (await res.clone().json()) as { error?: { code?: unknown } } | null;
+    const code = body?.error?.code;
+    return typeof code !== "string" || code === "UNAUTHORIZED";
+  } catch {
+    // Body không phải JSON (proxy/bản server cũ) - giữ hành vi cũ
+    return true;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   const token = await ensureToken();
   const headers = new Headers(init?.headers);
@@ -900,7 +975,7 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
       0
     );
   }
-  if (res.status === 401 && token && !retried && !uploadTokenFromUrl()) {
+  if (res.status === 401 && token && !retried && !uploadTokenFromUrl() && (await isAccessTokenRejected(res))) {
     dropToken();
     return request<T>(path, init, true);
   }
@@ -1082,6 +1157,27 @@ export const updateBrief = (id: string, brief: Partial<Brief>) =>
     `/api/projects/${encodeURIComponent(id)}/brief`,
     "PUT",
     brief
+  );
+
+/** Bản bóc bài viết nguồn của project (assets/source-article.md) */
+export interface SourceArticleSummary {
+  relPath: string;
+  title: string;
+  url: string;
+  chars: number;
+  excerpt: string;
+}
+
+export const getSourceArticle = (id: string) =>
+  request<{ article: SourceArticleSummary | null }>(
+    `/api/projects/${encodeURIComponent(id)}/source/article`
+  );
+
+/** Bóc bài từ link (lỗi kèm hướng dẫn dán tay) - server tự đặt brief nguồn = "article" */
+export const fetchSourceArticle = (id: string, url: string) =>
+  post<{ article: SourceArticleSummary; brief: Brief }>(
+    `/api/projects/${encodeURIComponent(id)}/source/article`,
+    { url }
   );
 
 /** PUT thay toàn bộ tags của project. */
@@ -1548,6 +1644,108 @@ export const testConnection = (provider: string) =>
   post<{ ok: boolean; message: string }>(
     `/api/connections/${encodeURIComponent(provider)}/test`
   );
+
+// ============ Gateway tạo ảnh (trang Kết nối - docs/EDITOR-V2-PLAN.md §4.3) ============
+// Luồng D. Server: luồng C (routes/gateways.ts, routes/imageProviders.ts).
+// Kiểu ImageProviderId / ImageProvidersResponse + getImageProviders nằm ở mục
+// "Trình chỉnh sửa v2" (luồng B2) - dùng lại, không khai báo lần hai.
+// Token/cookie chỉ đi MỘT chiều (UI → server); server không bao giờ trả lại.
+
+/** Một tài khoản ChatGPT web đã nạp vào gateway. */
+export interface ChatgptAccount {
+  id: string;
+  email?: string | null;
+  plan?: string | null;
+  /** Trạng thái do server soạn (ok / limited / expired / error…) */
+  status: string;
+  /** Số lượt tạo ảnh còn lại trong chu kỳ - null/vắng = gateway không báo */
+  imageQuotaRemaining?: number | null;
+  /** Mốc quota được làm mới (ISO) */
+  resetAt?: string | null;
+  /** Mốc accessToken hết hạn (ISO) */
+  expiresAt?: string | null;
+}
+
+/** GET /api/gateways/chatgpt */
+export interface ChatgptGatewayInfo {
+  /** venv gateway đã cài (doctor mục image-gateway) */
+  installed: boolean;
+  /** sidecar uvicorn đang chạy */
+  running: boolean;
+  accounts: ChatgptAccount[];
+  /**
+   * Bật/gọi sidecar thất bại (thiếu module, cổng 6871 bị chiếm…) - lúc đó
+   * `accounts` rỗng KHÔNG có nghĩa là chưa có tài khoản.
+   */
+  error?: { code: string; message: string };
+}
+
+/** GET /api/gateways/gemini-web */
+export interface GeminiWebInfo {
+  installed: boolean;
+  /** Đã lưu cookie __Secure-1PSID */
+  configured: boolean;
+  /** PSID đã che bớt - không bao giờ là giá trị thật */
+  psidMasked?: string | null;
+  status: string;
+  /** Lần cuối gọi thành công (ISO) */
+  lastOkAt?: string | null;
+}
+
+/** Kết quả "Kiểm tra kết nối" / lưu cookie của gateway. */
+export interface GatewayTestResult {
+  ok: boolean;
+  message: string;
+}
+
+/** Body PUT cookie: hai giá trị tách sẵn HOẶC cả chuỗi header Cookie (server tự tách). */
+export type GeminiWebCookiesInput =
+  | { psid: string; psidts?: string }
+  | { cookie: string };
+
+export const getChatgptGateway = () =>
+  request<ChatgptGatewayInfo>("/api/gateways/chatgpt");
+
+/**
+ * Nạp tài khoản: `session` = nguyên văn JSON dán từ
+ * https://chatgpt.com/api/auth/session HOẶC chỉ accessToken. 400 INVALID_SESSION
+ * khi không tìm thấy accessToken.
+ */
+export const addChatgptAccount = (session: string) =>
+  post<ChatgptAccount>("/api/gateways/chatgpt/accounts", { session });
+
+export const deleteChatgptAccount = (id: string) =>
+  request<void>(`/api/gateways/chatgpt/accounts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+export const testChatgptGateway = () =>
+  post<GatewayTestResult>("/api/gateways/chatgpt/test");
+
+export const getGeminiWeb = () =>
+  request<GeminiWebInfo>("/api/gateways/gemini-web");
+
+/** 400 INVALID_COOKIE khi không tách được __Secure-1PSID. */
+export const setGeminiWebCookies = (body: GeminiWebCookiesInput) =>
+  jsonBody<GatewayTestResult>("/api/gateways/gemini-web/cookies", "PUT", body);
+
+export const deleteGeminiWebCookies = () =>
+  request<void>("/api/gateways/gemini-web/cookies", { method: "DELETE" });
+
+export const testGeminiWeb = () =>
+  post<GatewayTestResult>("/api/gateways/gemini-web/test");
+
+/** PUT provider tạo ảnh mặc định ("auto" = mặc định → các provider đã cấu hình còn lại). */
+export const setDefaultImageProvider = (provider: ImageProviderId | "auto") =>
+  jsonBody<{ default: ImageProviderId | "auto"; gatewayDelaySec: number }>("/api/image-providers", "PUT", {
+    default: provider,
+  });
+
+/** PUT số giây nghỉ giữa hai ảnh liên tiếp trên gateway web (0-600). */
+export const setGatewayImageDelay = (gatewayDelaySec: number) =>
+  jsonBody<{ default: ImageProviderId | "auto"; gatewayDelaySec: number }>("/api/image-providers", "PUT", {
+    gatewayDelaySec,
+  });
 
 // ============ Style Design ============
 
@@ -2960,7 +3158,9 @@ export const getTtsVoices = (engine?: TtsEngine) =>
   );
 
 /** Engine nào dùng được trên MÁY NÀY - đừng đoán ở phía web, hỏi server. */
-export const getTtsEngines = () => request<TtsEngineStatus[]>("/api/tts/engines");
+/** refresh = dò lại từ đầu phía server (bỏ cache + cờ "không nạp được model") */
+export const getTtsEngines = (refresh = false) =>
+  request<TtsEngineStatus[]>(`/api/tts/engines${refresh ? "?refresh=1" : ""}`);
 
 /**
  * Danh sách phong cách dựng cho Ô CHỌN của brief - shape gọn (không có
@@ -3734,6 +3934,162 @@ export interface TimelineScene {
   transitionOverlap?: number;
   muted?: boolean;
   zoom?: TimelineZoom;
+  // ---- EDITOR-V2 mục 1.1 (docs/EDITOR-V2-PLAN.md) - mọi field tùy chọn, thiếu = hành vi cũ
+  /** Mặc định "cover". */
+  fit?: "cover" | "contain";
+  /** x/y = ĐỘ DỊCH tỉ lệ theo cạnh khung (-1..1); scale nhân thêm với zoom sẵn có. */
+  transform?: TimelineFrameTransform;
+  crop?: TimelineCrop;
+  color?: ColorAdjust;
+  /** Footage: 0..2, mặc định 1 (muted=true vẫn thắng). */
+  volume?: number;
+  /** Footage: fade âm vào/ra, giây 0..10. */
+  fadeInSec?: number;
+  fadeOutSec?: number;
+  /** Footage: 0.25..4. Thời lượng = (round(to*fps) - round(from*fps)) / speed (`@engine/duration`). */
+  speed?: number;
+  /** Kiểu chuyển cảnh sang scene KẾ, chạy trong `transitionOverlap`. Mặc định "fade". */
+  transition?: { type: TransitionType; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/** Kiểu chuyển cảnh - tự viết trong engines/remotion/src/components/Transition.tsx. */
+export type TransitionType =
+  | "fade"
+  | "slide-left"
+  | "slide-right"
+  | "slide-up"
+  | "slide-down"
+  | "wipe-left"
+  | "wipe-right"
+  | "zoom-in"
+  | "zoom-out"
+  | "blur"
+  | "none";
+
+/**
+ * Chỉnh màu TRÊN TIMELINE (scene + layer) - CSS filter, `@engine/color`.
+ * Mọi field tùy chọn, 0 = giữ nguyên. `preset` = id preset của server (getGradePresets).
+ */
+export interface ColorAdjust {
+  preset?: string;
+  /** -1..1 */
+  brightness?: number;
+  /** -1..1 */
+  contrast?: number;
+  /** -1..1 (-1 = đen trắng) */
+  saturation?: number;
+  /** -1..1 (âm = lạnh, dương = ấm) */
+  temperature?: number;
+  /** -1..1 (âm = xanh lá, dương = hồng) */
+  tint?: number;
+  /** độ -180..180 */
+  hue?: number;
+  /** 0..1 */
+  vignette?: number;
+  /** px 0..20 */
+  blur?: number;
+  [key: string]: unknown;
+}
+
+/** Cắt 4 cạnh của NGUỒN, tỉ lệ 0..0.45 mỗi cạnh. */
+export interface TimelineCrop {
+  top?: number;
+  right?: number;
+  bottom?: number;
+  left?: number;
+  [key: string]: unknown;
+}
+
+/** scale 0.1..5, rotate -180..180 (độ), x/y -1..1 - nghĩa của x/y khác nhau giữa scene và layer. */
+export interface TimelineFrameTransform {
+  x?: number;
+  y?: number;
+  scale?: number;
+  rotate?: number;
+  flipH?: boolean;
+  flipV?: boolean;
+  [key: string]: unknown;
+}
+
+export type LayerAnim =
+  | "none"
+  | "fade"
+  | "slide-up"
+  | "slide-down"
+  | "slide-left"
+  | "slide-right"
+  | "pop"
+  | "zoom";
+
+/** Keyframe layer - `frame` TƯƠNG ĐỐI so với layer.from; mỗi thuộc tính nội suy riêng. */
+export interface LayerKeyframe {
+  frame: number;
+  x?: number;
+  y?: number;
+  scale?: number;
+  rotate?: number;
+  opacity?: number;
+  /** Đường cong của đoạn TỪ mốc này tới mốc kế. Mặc định "linear". */
+  ease?: "linear" | "in" | "out" | "inOut";
+  [key: string]: unknown;
+}
+
+/** Kiểu chữ (text) / khối (shape). px là px COMPOSITION. */
+export interface LayerStyle {
+  /** vietnamese | sans | serif | mono (bảng font của SubtitleTrack) */
+  fontFamily?: string;
+  fontSizePx?: number;
+  fontWeight?: number;
+  color?: string;
+  align?: "left" | "center" | "right";
+  lineHeight?: number;
+  backgroundColor?: string;
+  paddingPx?: number;
+  radiusPx?: number;
+  strokeColor?: string;
+  strokeWidthPx?: number;
+  shadow?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Layer chồng (khóa top-level `layers[]`) - vẽ trên scene, dưới highlight/phụ đề;
+ * phần tử sau nằm trên. `from`/`durationInFrames` = FRAME TUYỆT ĐỐI. Hình học:
+ * `layerBox(layer, frame, W, H, mediaAspect, fps)` của `@engine/layerGeometry`.
+ */
+export interface Layer {
+  id: string;
+  kind: "image" | "video" | "text" | "shape";
+  from: number;
+  durationInFrames: number;
+  /** image/video (bắt buộc): đường dẫn trong project */
+  src?: string;
+  /** video: giây bắt đầu trong file */
+  mediaStart?: number;
+  /** video: mặc định true */
+  muted?: boolean;
+  /** video: 0..2 */
+  volume?: number;
+  /** text: cho phép xuống dòng */
+  text?: string;
+  style?: LayerStyle;
+  /** Bề rộng hộp, tỉ lệ theo chiều rộng khung 0.05..2 - mặc định 0.5 */
+  width?: number;
+  /** shape: tỉ lệ rộng/cao, mặc định 16/9 (image/video lấy từ file) */
+  aspect?: number;
+  /** x/y = vị trí TÂM hộp, -1..1 tính từ tâm khung (0,0 = giữa, 1 = mép) */
+  transform?: TimelineFrameTransform;
+  /** 0..1, mặc định 1 */
+  opacity?: number;
+  fit?: "cover" | "contain";
+  crop?: TimelineCrop;
+  color?: ColorAdjust;
+  /** Bo góc image/video (px composition) */
+  radiusPx?: number;
+  /** durationSec mặc định 0.4 */
+  animation?: { in?: LayerAnim; out?: LayerAnim; durationSec?: number; [key: string]: unknown };
+  keyframes?: LayerKeyframe[];
   [key: string]: unknown;
 }
 
@@ -3743,6 +4099,9 @@ export interface TimelineSfx {
   atFrame: number;
   volume?: number;
   mediaStart?: number;
+  /** Giây 0..10 (fade ra tính từ cuối file - trình phát/server tự đo độ dài) */
+  fadeInSec?: number;
+  fadeOutSec?: number;
   [key: string]: unknown;
 }
 
@@ -3752,6 +4111,9 @@ export interface TimelineMusic {
   volume?: number;
   duckVolume?: number;
   speech?: [number, number][];
+  /** Giây 0..10 - bỏ trống = 0.5s / 1s như trước, 0 = không fade */
+  fadeInSec?: number;
+  fadeOutSec?: number;
   [key: string]: unknown;
 }
 
@@ -3771,10 +4133,22 @@ export interface TimelineCaptionWord {
   [key: string]: unknown;
 }
 
+/**
+ * Dời/đổi cỡ một cue so với chỗ neo mặc định của track - x/y là phần của chiều
+ * rộng/cao khung (-1..1), scale 0.3..3. Bỏ trống = vị trí mặc định.
+ */
+export interface TimelineCueTransform {
+  x?: number;
+  y?: number;
+  scale?: number;
+  [key: string]: unknown;
+}
+
 export interface TimelineCaptionCue {
   from: number;
   durationInFrames: number;
   words: TimelineCaptionWord[];
+  transform?: TimelineCueTransform;
   [key: string]: unknown;
 }
 
@@ -3782,6 +4156,7 @@ export interface TimelineSubtitleCue {
   from: number;
   durationInFrames: number;
   text: string;
+  transform?: TimelineCueTransform;
   [key: string]: unknown;
 }
 
@@ -3801,6 +4176,7 @@ export interface TimelineHighlightCue {
   parts: TimelineHighlightPart[];
   tier?: "main" | "sub";
   accent?: "hot" | "cool";
+  transform?: TimelineCueTransform;
   [key: string]: unknown;
 }
 
@@ -3813,14 +4189,21 @@ export interface Timeline {
   /** Vắng mặt = mặc định; KHÔNG bao giờ null trong bản server trả về. */
   subtitleStyle?: TimelineSubtitleStyle;
   overlays: TimelineHighlightCue[];
+  /**
+   * Layer chồng (EDITOR-V2). Server mới luôn trả mảng ([] khi chưa có); để tùy
+   * chọn vì bản lịch sử/xung đột từ server cũ có thể thiếu - đọc qua `?? []`.
+   */
+  layers?: Layer[];
 }
 
 /**
  * Body `timeline` của PUT: khóa nào có thì THAY NGUYÊN khóa đó, khóa không gửi
- * giữ nguyên. `subtitleStyle: null` = xóa kiểu phụ đề (về mặc định).
+ * giữ nguyên. `subtitleStyle: null` = xóa kiểu phụ đề (về mặc định);
+ * `layers: null` = xóa khóa layers.
  */
-export type TimelinePatch = Partial<Omit<Timeline, "subtitleStyle">> & {
+export type TimelinePatch = Partial<Omit<Timeline, "subtitleStyle" | "layers">> & {
   subtitleStyle?: TimelineSubtitleStyle | null;
+  layers?: Layer[] | null;
 };
 
 /** Thông số đo bằng ffprobe - width/height vắng mặt với file chỉ có tiếng. */
@@ -4070,3 +4453,84 @@ export function timelineIssuesOf(err: unknown): TimelineIssue[] {
   if (!(err instanceof ApiError) || err.code !== "INVALID_TIMELINE") return [];
   return Array.isArray(err.data.issues) ? (err.data.issues as TimelineIssue[]) : [];
 }
+
+// ============ Trình chỉnh sửa v2 - tạo ảnh AI + giao cho AI (docs/EDITOR-V2-PLAN.md §3, §4.3, §4.4) ============
+//
+// Luồng B2 (inspector/khung xem trước/bảng AI). Server: luồng C (generate-image,
+// image-providers) và luồng E (handoff).
+
+/** Id nhà cung cấp tạo ảnh - "auto" = provider mặc định rồi tới các provider đã cấu hình còn lại. */
+export type ImageProviderId = "gemini-api" | "chatgpt-web" | "gemini-web";
+
+export interface ImageProviderInfo {
+  id: ImageProviderId | string;
+  label: string;
+  /** false = chưa nhập key/token/cookie ở trang Kết nối - không chọn được */
+  configured: boolean;
+  models: string[];
+}
+
+export interface ImageProvidersResponse {
+  default: ImageProviderId | "auto" | string;
+  /** Gateway web (ChatGPT / Gemini cookie) vẽ từng ảnh một, nghỉ chừng này giây giữa hai ảnh */
+  gatewayDelaySec: number;
+  providers: ImageProviderInfo[];
+}
+
+export const getImageProviders = () => request<ImageProvidersResponse>("/api/image-providers");
+
+export interface GenerateProjectImageInput {
+  prompt: string;
+  /** Bỏ trống = "auto" */
+  provider?: ImageProviderId | "auto";
+  /** filler = cảnh trám (scene ảnh), layer = ảnh chồng */
+  purpose: "filler" | "layer";
+  /** Cho phép chữ trong ảnh (mặc định server: không) */
+  allowText?: boolean;
+}
+
+export interface GenerateImageTask {
+  status: "running" | "done" | "failed";
+  /** Đường dẫn trong project, vd "assets/generated/hoang-hon.png" - có khi status=done */
+  relPath?: string;
+  provider?: string;
+  error?: { code: string; message: string };
+  elapsedSec: number;
+}
+
+/**
+ * Tạo ảnh chạy nền (không chiếm render queue) → 202 {taskId}. Lỗi đáng xử lý
+ * riêng: 409 AGENT_BUSY, 503 GATEWAY_NOT_INSTALLED / GATEWAY_UNAVAILABLE.
+ */
+export const generateProjectImage = (projectId: string, body: GenerateProjectImageInput) =>
+  post<{ taskId: string }>(`${projectPath(projectId)}/generate-image`, body);
+
+export const getGenerateImageTask = (projectId: string, taskId: string) =>
+  request<GenerateImageTask>(
+    `${projectPath(projectId)}/generate-image/${encodeURIComponent(taskId)}`
+  );
+
+/**
+ * AI viết MỘT dòng chữ cho layer chữ tại một mốc timeline (không ghi meta.json -
+ * trình chỉnh sửa tự chèn). `context` = lời thoại quanh mốc đó. 503 NO_CLAUDE_AUTH.
+ */
+export const generateProjectText = (
+  projectId: string,
+  body: { prompt: string; atSec?: number; context?: string }
+) => post<{ text: string }>(`${projectPath(projectId)}/generate-text`, body);
+
+/**
+ * "Giao cho AI": mở phiên AI edit tiếp tục từ timeline hiện tại (server chụp
+ * revision `ai-before` trước khi agent chạy) → 202 {sessionId, finishMode, beforeRev}.
+ * 409 AGENT_BUSY nếu đang có phiên chạy. finishMode bỏ trống = "draft".
+ */
+export const startEditorHandoff = (
+  projectId: string,
+  body: { instruction: string; finishMode?: "draft" | "final" }
+) =>
+  post<{
+    sessionId: string;
+    finishMode: "draft" | "final";
+    /** Revision `ai-before` cho nút "Hoàn tác" - null = server không chụp được */
+    beforeRev: string | null;
+  }>(`${projectPath(projectId)}/editor/handoff`, body);

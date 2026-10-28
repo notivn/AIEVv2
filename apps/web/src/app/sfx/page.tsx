@@ -276,7 +276,12 @@ export default function SfxPage() {
     audioRef.current = audio;
     setActionError(null);
     setPlaying(entryFile);
-    audio.play().catch(() => setPlaying(null));
+    // Chỉ tắt nút khi lỗi là của bài ĐANG phát: bấm sang bài khác lúc bài này
+    // còn đang tải thì pause() làm play() cũ reject (AbortError) - không chặn thì
+    // nó tắt nhầm trạng thái của bài mới đang phát.
+    audio.play().catch(() => {
+      if (audioRef.current === audio) setPlaying(null);
+    });
   }
 
   /** Toggle đề xuất - optimistic update, revert nếu API lỗi. */
@@ -357,6 +362,15 @@ export default function SfxPage() {
       setDeletingFile(null);
       setDeleteTarget(null);
     }
+  }
+
+  // Đóng modal thì bỏ luôn file đã chọn: modal đóng là ô chọn file bị tháo
+  // khỏi DOM, mở lại nó trống trơn - giữ `file` thì nút Tải lên vẫn sáng và tải
+  // lên một file người dùng không còn thấy (vd file của lần bấm Hủy trước).
+  function closeUpload() {
+    setOpen(false);
+    setFile(null);
+    setUploadError(null);
   }
 
   async function onUpload() {
@@ -510,10 +524,10 @@ export default function SfxPage() {
       <Modal
         title={t("sfx.add")}
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeUpload}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>
+            <Button variant="secondary" onClick={closeUpload}>
               {t("common.cancel")}
             </Button>
             <Button onClick={onUpload} disabled={!file || uploading}>
@@ -711,7 +725,12 @@ function MusicSection({
     audioRef.current = audio;
     setActionError(null);
     setPlaying(entryFile);
-    audio.play().catch(() => setPlaying(null));
+    // Chỉ tắt nút khi lỗi là của bài ĐANG phát: bấm sang bài khác lúc bài này
+    // còn đang tải thì pause() làm play() cũ reject (AbortError) - không chặn thì
+    // nó tắt nhầm trạng thái của bài mới đang phát.
+    audio.play().catch(() => {
+      if (audioRef.current === audio) setPlaying(null);
+    });
   }
 
   function openEdit(entry: MusicEntry) {
@@ -762,6 +781,13 @@ function MusicSection({
       setDeletingFile(null);
       setDeleteTarget(null);
     }
+  }
+
+  // Như closeUpload của nửa sound effect: đóng modal là bỏ file đã chọn
+  function closeAdd() {
+    onCloseAdd();
+    setFile(null);
+    setUploadError(null);
   }
 
   async function onUpload() {
@@ -840,10 +866,10 @@ function MusicSection({
       <Modal
         title={t("music.add")}
         open={addOpen}
-        onClose={onCloseAdd}
+        onClose={closeAdd}
         footer={
           <>
-            <Button variant="secondary" onClick={onCloseAdd}>
+            <Button variant="secondary" onClick={closeAdd}>
               {t("common.cancel")}
             </Button>
             <Button onClick={onUpload} disabled={!file || uploading}>

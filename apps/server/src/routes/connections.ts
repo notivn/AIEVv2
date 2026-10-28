@@ -3,6 +3,10 @@ import path from "node:path";
 import { Router } from "express";
 import { hasClaudeAuth, upsertEnvVar } from "../config.js";
 import { HttpError } from "../util.js";
+import { chatgptAccountsKnown, testChatgptGateway } from "../imageProviders/chatgptGateway.js";
+import { geminiWebInfo, testGeminiWeb } from "../imageProviders/geminiWeb.js";
+import { providerConfigured } from "../imageProviders/index.js";
+import { chatgptGatewayInstalled } from "../imageProviders/runtime.js";
 
 /**
  * Quản lý kết nối AI trên web UI - xem trạng thái + nhập/xóa API key.
@@ -130,11 +134,71 @@ function listConnections(): ConnectionInfo[] {
   ];
 }
 
+/**
+ * Hai nhà cung cấp tạo ảnh bằng TÀI KHOẢN WEB (gateway, docs/EDITOR-V2-PLAN.md
+ * §4). Trả ở field RIÊNG `gateways` chứ không trộn vào `connections`: chúng
+ * không có API key trong .env, mà UI vẽ mỗi phần tử `connections` thành một ô
+ * nhập key. Chi tiết (tài khoản, cookie) ở /api/gateways/*.
+ */
+interface GatewayConnectionInfo {
+  id: "chatgpt-web" | "gemini-web";
+  label: string;
+  roles: string[];
+  /** Venv gateway đã cài (doctor mục image-gateway) */
+  installed: boolean;
+  /** Đã có tài khoản/cookie */
+  connected: boolean;
+  /** not-installed | not-configured | ok | untested | expired | error | unknown */
+  status: string;
+  note: string;
+}
+
+function listGatewayConnections(): GatewayConnectionInfo[] {
+  const chatgptInstalled = chatgptGatewayInstalled();
+  const chatgptConnected = providerConfigured("chatgpt-web");
+  const known = chatgptAccountsKnown();
+  const gem = geminiWebInfo();
+  return [
+    {
+      id: "chatgpt-web",
+      label: "ChatGPT (tài khoản web)",
+      roles: ["image"],
+      installed: chatgptInstalled,
+      connected: chatgptConnected,
+      status: !chatgptInstalled
+        ? "not-installed"
+        : !chatgptConnected
+          ? "not-configured"
+          : known === null
+            ? "unknown"
+            : "ok",
+      note: !chatgptInstalled
+        ? "Chưa cài gateway - vào Cấu hình, mục Image gateway, bấm Cài tự động."
+        : chatgptConnected
+          ? "Tạo ảnh bằng lượt của tài khoản ChatGPT (không tính tiền API). Gateway chạy riêng trên máy, chỉ nghe localhost."
+          : "Chưa có tài khoản - dán JSON từ chatgpt.com/api/auth/session để thêm.",
+    },
+    {
+      id: "gemini-web",
+      label: "Gemini (cookie web)",
+      roles: ["image"],
+      installed: gem.installed,
+      connected: gem.configured,
+      status: gem.status,
+      note: !gem.installed
+        ? "Chưa cài gateway - vào Cấu hình, mục Image gateway, bấm Cài tự động."
+        : gem.configured
+          ? "Tạo ảnh bằng tài khoản Google web (cookie __Secure-1PSID). Logo sparkle của Gemini được tự gỡ."
+          : "Chưa có cookie - dán __Secure-1PSID (và __Secure-1PSIDTS) từ gemini.google.com.",
+    },
+  ];
+}
+
 const router = Router();
 
-// GET /api/connections
+// GET /api/connections → {connections, gateways}
 router.get("/", (_req, res) => {
-  res.json({ connections: listConnections() });
+  res.json({ connections: listConnections(), gateways: listGatewayConnections() });
 });
 
 // PUT /api/connections/:provider/key - { apiKey: string|null } (null = xóa)
@@ -189,12 +253,26 @@ router.put("/:provider/key", (req, res) => {
     delete process.env.GOOGLE_API_KEY;
   }
 
-  res.json({ connections: listConnections() });
+  res.json({ connections: listConnections(), gateways: listGatewayConnections() });
 });
 
 // POST /api/connections/:provider/test - gọi thử API rẻ nhất để xác minh key hoạt động
 router.post("/:provider/test", async (req, res) => {
   const provider = req.params.provider;
+
+  // Gateway tài khoản web - cùng hàm với /api/gateways/*/test
+  if (provider === "chatgpt-web") {
+    res.json(
+      chatgptGatewayInstalled()
+        ? await testChatgptGateway()
+        : { ok: false, message: "Chưa cài gateway ChatGPT - vào Cấu hình, mục Image gateway." },
+    );
+    return;
+  }
+  if (provider === "gemini-web") {
+    res.json(await testGeminiWeb());
+    return;
+  }
 
   if (provider === "gemini") {
     const key = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;

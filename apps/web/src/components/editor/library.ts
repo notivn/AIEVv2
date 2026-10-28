@@ -17,13 +17,14 @@ export type LibraryItem =
   | { source: "music"; file: string; name: string };
 
 /** Track nhận thả - trùng giá trị `data-track` của `.tl-row`. */
-export type DropTrack = "scene" | "sfx" | "music";
+export type DropTrack = "scene" | "layer" | "sfx" | "music";
 
 /** Gói dữ liệu chính (JSON của LibraryItem). */
 export const LIBRARY_MIME = "application/x-aiev-library";
 /** Type đánh dấu track nhận được - type MIME luôn bị trình duyệt hạ chữ thường. */
 export const TARGET_MIME: Record<DropTrack, string> = {
   scene: "application/x-aiev-target-scene",
+  layer: "application/x-aiev-target-layer",
   sfx: "application/x-aiev-target-sfx",
   music: "application/x-aiev-target-music",
 };
@@ -35,7 +36,8 @@ export function dropTracksOf(item: LibraryItem): DropTrack[] {
       // Audio của project: file trong assets/music/ mặc định là NHẠC NỀN (nút "+"
       // đi qua hỏi-thay-nhạc như nhạc thư viện), còn lại là hiệu ứng âm. Thả
       // tay lên làn kia vẫn được.
-      if (item.kind !== "audio") return ["scene"];
+      // Video/ảnh: mặc định thành scene; thả lên track Layer thì thành layer chồng
+      if (item.kind !== "audio") return ["scene", "layer"];
       return /^assets\/music\//i.test(item.relPath.replace(/\\/g, "/")) ? ["music", "sfx"] : ["sfx", "music"];
     case "sfx":
       return ["sfx"];
@@ -77,10 +79,35 @@ export function readDragData(dt: DataTransfer): LibraryItem | null {
   }
 }
 
-/** Đích thả/thêm: track + frame (sfx) hoặc vị trí chèn scene. */
+// ---------------------------------------------------------------- file từ máy (Explorer/Finder)
+
+/**
+ * Kéo FILE từ máy vào: `dataTransfer.types` có "Files" (lúc dragover chưa đọc
+ * được tên file, chỉ biết là file). File thả lên track Video/Layer/SFX được tải
+ * lên rồi chèn vào đó; thả chỗ khác chỉ tải vào thư viện của project.
+ */
+export const isFileDrag = (types: readonly string[]): boolean => types.includes("Files");
+
+/** Track nhận được file thả từ máy (loại file chỉ biết sau khi thả - xem fileKindOf). */
+export const FILE_DROP_TRACKS: readonly DropTrack[] = ["scene", "layer", "sfx"];
+
+/** Loại media của file theo MIME, rơi về đuôi file (MIME trống với vài đuôi trên Windows). */
+export function fileKindOf(file: { name: string; type: string }): "video" | "image" | "audio" | "other" {
+  const mime = file.type.toLowerCase();
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("audio/")) return "audio";
+  const ext = /\.([a-z0-9]+)$/i.exec(file.name)?.[1]?.toLowerCase() ?? "";
+  if (["mp4", "mov", "webm", "mkv", "avi", "m4v"].includes(ext)) return "video";
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif"].includes(ext)) return "image";
+  if (["mp3", "wav", "ogg", "m4a", "aac", "flac"].includes(ext)) return "audio";
+  return "other";
+}
+
+/** Đích thả/thêm: track + frame (sfx/layer) hoặc vị trí chèn scene. */
 export interface DropTarget {
   track: DropTrack;
-  /** Frame tuyệt đối (sfx thả đúng chỗ con trỏ) */
+  /** Frame tuyệt đối (sfx/layer thả đúng chỗ con trỏ) */
   frame: number;
   /** Vị trí chèn trong mảng scenes (track "scene") */
   sceneIndex: number;

@@ -89,7 +89,7 @@ belonging to the **same project** never run at the same time.
 
 ## Requirements
 
-- **Node.js 22+** (HyperFrames requires `>=22`)
+- **Node.js 24 LTS** (or 22.23.4+ / 26.12.1+ - the October 2026 security release; HyperFrames requires `>=22`)
 - **FFmpeg** on PATH (macOS: `brew install ffmpeg`)
 - **Google Chrome** (HyperFrames and Remotion render through headless Chromium)
 - **Claude**: sign in to [Claude Code](https://claude.com/claude-code) on this machine (uses subscription OAuth - recommended) *or* put `ANTHROPIC_API_KEY` in `.env`
@@ -261,6 +261,14 @@ Found a security problem? Do not open a public issue - follow [SECURITY.md](SECU
 > Remotion in particular is free for individuals and companies of up to 3 people; beyond that you
 > need a [Company License](https://remotion.pro) - and the video editor embeds the Remotion Player, which
 > Remotion licenses under its "Automators" tier for such companies. Claude and Gemini usage is billed to your own account.
+>
+> **Exception - `gateways/`.** The optional image gateways are **not MIT**: `gateways/chatgpt/` (vendored
+> [chatgpt2api](https://github.com/yukkcat/chatgpt2api)) and `gateways/gemini-web/` (built on
+> [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API)) are **AGPL-3.0**, each with its own `LICENSE`.
+> They run as separate processes (a local-only sidecar on 127.0.0.1 and a stdin/stdout worker) in their own
+> venv `.runtime/venv-gateway`, installed only when you opt in (Settings → Image gateway).
+> `gateways/gemini-watermark-remover/` is MIT. Using a ChatGPT or Google account through them is subject to
+> those services' terms - that is your call.
 >
 ### Assets: this repo ships code, not media
 

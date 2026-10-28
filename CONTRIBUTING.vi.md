@@ -19,11 +19,11 @@ npm install
 npm run dev          # web ở http://localhost:6868, backend ở 6869
 ```
 
-Cần **Node.js 22+**, **FFmpeg** trên PATH và **Google Chrome**. Chạy `node start/doctor.mjs --fix` để kiểm tra và cài giúp phần cài được. Khóa Claude và Gemini chỉ cần khi thực sự chạy phần AI, không cần để build hay typecheck.
+Cần **Node.js 24 LTS** (22.23.4+ cũng được), **FFmpeg** trên PATH và **Google Chrome**. Chạy `node start/doctor.mjs --fix` để kiểm tra và cài giúp phần cài được. Khóa Claude và Gemini chỉ cần khi thực sự chạy phần AI, không cần để build hay typecheck.
 
 ## Trước khi mở Pull Request
 
-Hai lệnh này bắt buộc phải sạch. CI chạy đúng hai lệnh này trên mọi PR:
+Hai lệnh này bắt buộc phải sạch. CI chạy đúng hai lệnh này trên mọi PR (cả Node 24 lẫn 22), kèm `npm audit --omit=dev --audit-level=high`:
 
 ```bash
 npm run typecheck    # server + web + remotion
@@ -58,6 +58,7 @@ Nếu bạn sửa thứ gì liên quan đến render, hãy dựng thử một b�
 ## Những thứ sẽ bị trả PR về
 
 - Thêm dependency npm mà không giải thích lý do trong PR. Mỗi dependency là một rủi ro chuỗi cung ứng, nhất là với dự án có giữ khóa API.
+- Duyệt install script mới mà không giải thích. `.npmrc` bật `strict-allow-scripts`, nên `npm install` sẽ dừng ở bất kỳ dependency nào có install script chưa nằm trong `allowScripts` của `package.json`. Đọc script đó, rồi mới `npm install-scripts approve <pkg>`. Nâng một package đã duyệt (esbuild, better-sqlite3) cũng phải duyệt lại, vì mục duyệt ghim theo phiên bản.
 - Commit thứ sinh ra hoặc thứ riêng tư: `renders/`, `outputs/`, `imports/`, `video-projects/`, `image-projects/`, `assets/voices/`, `.env`, `*.tsbuildinfo`. Chúng bị gitignore là có lý do.
 - File media (sound effect, nhạc, font, logo) không rõ nguồn và giấy phép.
 - Sửa pipeline theo hướng bỏ qua bước draft hoặc bỏ qua cửa QC.

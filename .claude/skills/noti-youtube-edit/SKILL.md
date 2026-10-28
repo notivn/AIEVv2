@@ -214,10 +214,10 @@ Every video gets SFX punctuating the beats (figures, reveals, scene changes/came
 ## ⚠️ ENVIRONMENT (Windows) + TRANSCRIPTION
 - **FFmpeg**: `winget install Gyan.FFmpeg`. The PATH change only applies to NEW shells → when calling `npx hyperframes`, prepend the bin to `$env:Path` inline:
   `$bin="C:\Users\<user>\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_*\ffmpeg-*-full_build\bin"; $env:Path="$bin;$env:Path"`
-- `npm install` at the repo root; `npx hyperframes browser ensure` (downloads its own Chromium).
+- Dependencies (npm packages, Chromium, faster-whisper in `.runtime/venv`, FFmpeg in `.runtime/bin`) are installed by `start/doctor.mjs` (the Doctor page). **Never run `npm install`, `pip install` or `winget` yourself** - the agent policy blocks them (see video-pipeline, "Agent sandbox"); if something is missing, stop and ask the user to run Doctor. `npx hyperframes browser ensure` is fine.
 - ⚠️ `npx hyperframes transcribe` needs an external `whisper-cpp` + an `.en` English-only model → **do NOT use it for Vietnamese**.
 
-**Vietnamese transcription** - use **faster-whisper** (`pip install faster-whisper`):
+**Vietnamese transcription** - use **faster-whisper** (installed by Doctor into `.runtime/venv`):
 ```python
 import sys; sys.stdout.reconfigure(encoding="utf-8")   # the Windows console cannot print diacritics
 from faster_whisper import WhisperModel

@@ -60,9 +60,16 @@ const ERROR_KEY: Record<string, string> = {
 
 export function ProjectQcCard({
   projectId,
+  version,
   onChanged,
 }: {
   projectId: string;
+  /**
+   * Đổi khi bản draft/final vừa render lại - nạp lại report để server tính lại
+   * `stale` (file đã đổi sau lần đo). Không nạp lại thì card vẫn báo "Đạt" cho
+   * bản cũ trong khi cổng QC đã chặn final vì report cũ.
+   */
+  version?: string;
   onChanged?: () => void;
 }) {
   const { t, tf } = useT();
@@ -99,7 +106,7 @@ export function ProjectQcCard({
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, version]);
 
   async function onRun() {
     if (running) return;

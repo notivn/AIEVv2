@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Router } from "express";
+import { nanoid } from "nanoid";
 import { isAgentBusy, runAgent } from "../agent.js";
 import {
-  prepareEditSession,
+  briefPromptContextOf,
   scaffoldProjectFiles,
   uniqueProjectId,
 } from "../childProject.js";
+import { buildEditPrompt } from "../editPrompt.js";
 import {
   GRADE_PRESETS,
   generateGradePreviews,
@@ -33,6 +35,7 @@ import {
   writeAssetEntry,
   writeMeta,
   type Brief,
+  type FinishMode,
   type ProjectMeta,
 } from "../meta.js";
 import { parseModelEffort } from "./providers.js";
@@ -148,6 +151,10 @@ const CLONE_SKIP = new Set([
   "verify",
   "node_modules",
   "props.resolved.json", // sản phẩm trung gian của lần assemble cũ
+  // Báo cáo QC đo trên bản draft CỦA PROJECT GỐC (outputs/<id gốc>-draft.mp4):
+  // chép sang thì cổng QC của assemble-final (jobRules.ts) thấy một report "pass"
+  // chưa cũ và cho bản nhân bản xuất final mà bản draft của chính nó chưa từng QC
+  "qc.json",
   // Lịch sử timeline của trình chỉnh sửa (tới 100 bản): là lịch sử của project
   // GỐC - chép sang thì "khôi phục" ở bản nhân bản đưa về trạng thái của project
   // khác, và project mới đẻ ra đã nặng thêm cả trăm file JSON
@@ -161,7 +168,9 @@ function copyDirFiltered(src: string, dst: string): void {
     const s = path.join(src, entry.name);
     const d = path.join(dst, entry.name);
     if (entry.isDirectory()) copyDirFiltered(s, d);
-    else fs.copyFileSync(s, d);
+    // Chỉ file thường: symlink/junction trong project (agent tạo, giải nén...) mà
+    // copyFileSync theo link là chép nội dung file NGOÀI repo vào bản sao, phát qua /media
+    else if (entry.isFile()) fs.copyFileSync(s, d);
   }
 }
 
@@ -264,7 +273,7 @@ router.get("/:id/junk", (req, res) => {
 router.post("/:id/junk/clean", (req, res) => {
   const id = req.params.id;
   readMeta(id); // ném 404 nếu project không có
-  if (db.hasActiveJobForProject(id)) {
+  if (db.hasActiveJobForProject(id, "video")) {
     throw new HttpError(
       409,
       "JOB_RUNNING",
@@ -439,6 +448,14 @@ router.put("/:id/assets/:file/grade", (req, res) => {
       `preset phải là một trong: ${GRADE_PRESETS.map((p) => p.id).join(", ")}`,
     );
   }
+  // Như route description: chỉ ghi entry cho asset có thật - không thì tên tùy ý
+  // (rác, "__proto__"...) thành khóa trong assets.json
+  const exists = listFilesRecursive(projectAssetsDirOf(id)).some(
+    (f) => f.name === file && f.name !== "assets.json",
+  );
+  if (!exists) {
+    throw new HttpError(404, "ASSET_NOT_FOUND", `Không tìm thấy asset "${file}" trong project "${id}"`);
+  }
   const adjust = normAdjust(body.adjust);
   // Chỉ lưu adjust khi khác mặc định - entry gọn, prompt AI không thừa thãi
   writeAssetEntry(id, file, {
@@ -448,7 +465,56 @@ router.put("/:id/assets/:file/grade", (req, res) => {
   res.json({ file, colorGrade: preset, colorAdjust: isDefaultAdjust(adjust) ? null : adjust });
 });
 
+/**
+ * Mở phiên AI edit của MỘT project theo chế độ hoàn tất (docs/EDITOR-V2-PLAN.md
+ * mục 3) - dùng cho nút "Bắt đầu edit bằng AI" và "Giao cho AI" của trình chỉnh sửa.
+ *
+ * goal của phiên và chế độ in trong prompt lấy từ CÙNG một giá trị: lệch nhau là
+ * prompt bảo "dừng ở draft" trong khi gate agent.ts ép render final (hoặc ngược lại).
+ * Luồng hàng loạt (cắt short, tái chế tỉ lệ, Text to video, Auto cut) vẫn đi
+ * prepareEditSession của childProject.ts = goal 'final' như cũ.
+ *
+ * Prompt dựng y hệt prepareEditSession (briefPromptContextOf + listProjectAssets +
+ * buildEditPrompt) để hai đường không bao giờ thấy cấu hình khác nhau.
+ */
+export function openProjectEditSession(input: {
+  id: string;
+  meta: ProjectMeta;
+  extraNotes?: string;
+  model?: string | null;
+  effort?: string | null;
+  /** Thiếu = brief.finishMode của project (mặc định "draft") */
+  finishMode?: FinishMode;
+  /** Có mặt = phiên bàn giao từ trình chỉnh sửa (POST /editor/handoff) */
+  handoffInstruction?: string;
+}): { sessionId: string; prompt: string; finishMode: FinishMode } {
+  const { id, meta } = input;
+  const ctx = briefPromptContextOf(id, meta);
+  const finishMode = input.finishMode ?? ctx.brief.finishMode;
+  const prompt = buildEditPrompt({
+    id,
+    meta,
+    ...ctx,
+    assets: listProjectAssets(id),
+    extraNotes: input.extraNotes ?? "",
+    finishMode,
+    handoffInstruction: input.handoffInstruction,
+  });
+  const sessionId = `sess_${nanoid()}`;
+  const name = meta.name || id;
+  db.createChatSession(
+    sessionId,
+    input.handoffInstruction ? `Giao cho AI: ${name}` : `Edit: ${name}`,
+    id,
+    input.model ?? null,
+    input.effort ?? null,
+    finishMode,
+  );
+  return { sessionId, prompt, finishMode };
+}
+
 // POST /api/projects/:id/edit - { extraNotes?, model?, effort? } → 202 { sessionId }, agent chạy nền
+// Phiên mở theo brief.finishMode (goal 'draft' mặc định | 'final')
 router.post("/:id/edit", (req, res) => {
   const id = req.params.id;
   const meta = readMeta(id); // ném 404 nếu không có
@@ -458,6 +524,18 @@ router.post("/:id/edit", (req, res) => {
   }
   const extraNotes = typeof body.extraNotes === "string" ? body.extraNotes.trim() : "";
   const { model, effort } = parseModelEffort(body); // 400 nếu không hợp lệ
+
+  // Nguồn "Yêu cầu" / "Link bài viết" mà để trống: agent không có gì để dựng
+  const brief = briefOf(meta);
+  if (brief.sourceKind === "request" && !brief.sourceText.trim()) {
+    throw new HttpError(400, "SOURCE_TEXT_REQUIRED", "Nguồn \"Yêu cầu\" đang trống - ghi yêu cầu/nội dung video trước.");
+  }
+  if (brief.sourceKind !== "video" && brief.narrationMode === "file" && !brief.narrationFile) {
+    throw new HttpError(400, "NARRATION_FILE_REQUIRED", "Đã chọn giọng thu sẵn nhưng chưa chọn file giọng ở cột Nguồn.");
+  }
+  if (brief.sourceKind === "article" && !brief.sourceUrl) {
+    throw new HttpError(400, "SOURCE_URL_REQUIRED", "Nguồn \"Link bài viết\" chưa có link - dán link bài viết trước.");
+  }
 
   // Bấm "Edit bằng AI" hai lần = hai agent cùng sửa + render một project. Chặn
   // như review/send đã chặn.
@@ -469,9 +547,9 @@ router.post("/:id/edit", (req, res) => {
     );
   }
 
-  // Soạn prompt (brief + assets + sfx/nhạc + Style Design) và mở phiên goal='final'
-  // - dùng chung với "cắt short"/"tái chế tỉ lệ" (xem childProject.ts)
-  const { sessionId, prompt } = prepareEditSession({ id, meta, extraNotes, model, effort });
+  // Soạn prompt (brief + assets + sfx/nhạc + Style Design) và mở phiên theo
+  // brief.finishMode: "draft" (mặc định) → goal 'draft', "final" → goal 'final'
+  const { sessionId, prompt } = openProjectEditSession({ id, meta, extraNotes, model, effort });
 
   // Trả 202 NGAY, agent chạy nền - cùng pipeline với /api/chat (SSE kênh `agent`,
   // message đầu session được agent.ts tự prepend CLAUDE.md)
@@ -492,7 +570,7 @@ router.delete("/:id", (req, res) => {
     throw new HttpError(404, "PROJECT_NOT_FOUND", `Không tìm thấy project "${id}"`);
   }
   // Job đang chạy/chờ vẫn đọc-ghi file trong project - xóa lúc này là rút thảm dưới chân job
-  if (db.hasActiveJobForProject(id)) {
+  if (db.hasActiveJobForProject(id, "video")) {
     throw new HttpError(
       409,
       "JOB_RUNNING",
@@ -500,6 +578,17 @@ router.delete("/:id", (req, res) => {
     );
   }
   fs.rmSync(projectDirOf(id), { recursive: true, force: true });
+  // Dọn luôn file trung gian NGOÀI thư mục project (bản final <id>-v*.mp4 giữ
+  // nguyên). Bỏ sót thì project mới tạo lại đúng id này (id sinh từ tên nên rất
+  // hay trùng) nhận bản draft của project đã xóa: QC mặc định đo
+  // outputs/<id>-draft.mp4 cũ, ra "pass" và cổng QC cho xuất final khi bản draft
+  // của chính nó chưa có
+  try {
+    fs.rmSync(path.join(paths.outputsDir, `${id}-draft.mp4`), { force: true });
+    fs.rmSync(path.join(paths.stagingDir, `vid-${id}`), { recursive: true, force: true });
+  } catch {
+    /* file đang bị trình phát khác giữ - project đã xóa xong, không báo lỗi */
+  }
   res.status(204).end();
 });
 

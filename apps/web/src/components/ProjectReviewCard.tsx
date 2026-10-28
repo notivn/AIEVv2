@@ -34,6 +34,7 @@ import { IconButton } from "@/components/IconButton";
 import { Panel } from "@/components/Panel";
 import { clock } from "@/lib/format";
 import { useT } from "@/lib/i18n";
+import { useAgentEvents } from "@/lib/useEvents";
 
 /** Bộ đếm ký tự chỉ hiện khi sắp chạm trần - không làm ồn ô nhập lúc gõ ngắn. */
 const COUNTER_FROM = REVIEW_TEXT_MAX - 80;
@@ -202,6 +203,13 @@ export function ProjectReviewCard({
   useEffect(() => {
     if (!aiRunning) setSessionBusy(false);
   }, [aiRunning]);
+  // Effect trên chỉ mở khóa khi aiRunning đổi true → false. 409 do một phiên
+  // trang chưa biết (mở từ tab khác, từ trình chỉnh sửa) thì aiRunning vẫn false
+  // suốt từ đầu tới cuối - không có lần đổi nào, nút khóa tới khi F5. Có phiên
+  // nào kết thúc là mở khóa; còn bận thật thì server lại trả 409 như cũ.
+  useAgentEvents((e) => {
+    if (e.kind === "done") setSessionBusy(false);
+  });
 
   const openCount = notes.filter((n) => n.status === "open").length;
   const sendBlocked = aiRunning || sessionBusy;

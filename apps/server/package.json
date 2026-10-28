@@ -11,22 +11,25 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.295",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.304",
     "@mozilla/readability": "^0.6.0",
-    "better-sqlite3": "^12.11.1",
-    "dotenv": "^17.2.0",
-    "express": "^5.2.1",
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
     "gray-matter": "^4.0.3",
     "linkedom": "^0.18.13",
-    "multer": "^2.4.0",
-    "nanoid": "^5.1.0"
+    "multer": "^2.5.0",
+    "nanoid": "^6.0.2"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/express": "^5.0.0",
     "@types/multer": "^2.0.0",
-    "@types/node": "^22.10.0",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "@types/node": "^24.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   }
 }

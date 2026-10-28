@@ -4,6 +4,7 @@ import { Router } from "express";
 import { nanoid } from "nanoid";
 import { paths, repoRoot } from "../config.js";
 import * as db from "../db.js";
+import { ffprobeSafeArgs, isPlaylistFormat } from "../ffmpegSafe.js";
 import { broadcast } from "../events.js";
 import {
   AUTO_CUT_ASPECTS,
@@ -149,7 +150,7 @@ function maybeNum(v: unknown): number | null {
 async function probeSource(abs: string, rel: string): Promise<Omit<AutoCutSource, "relPath">> {
   const r = await execFileCaptureAll(
     "ffprobe",
-    [
+    ffprobeSafeArgs([
       "-v",
       "error",
       "-select_streams",
@@ -161,11 +162,11 @@ async function probeSource(abs: string, rel: string): Promise<Omit<AutoCutSource
       "-show_entries",
       "stream_tags=rotate",
       "-show_entries",
-      "format=duration",
+      "format=duration,format_name",
       "-of",
       "json",
       abs,
-    ],
+    ]),
     { timeoutMs: 30_000 },
   );
   if (r.timedOut) {
@@ -187,6 +188,10 @@ async function probeSource(abs: string, rel: string): Promise<Omit<AutoCutSource
     json = JSON.parse(r.stdout) as typeof json;
   } catch {
     throw new HttpError(400, "PROBE_FAILED", `ffprobe trả JSON không đọc được cho "${rel}"`);
+  }
+  // Playlist HLS/ffconcat đội lốt .mp4: ffmpeg sẽ đi mở file/URL khác - từ chối
+  if (isPlaylistFormat(json.format?.format_name)) {
+    throw new HttpError(400, "INVALID_SOURCE", `File "${rel}" là playlist (HLS/concat), không phải video`);
   }
 
   const stream = Array.isArray(json.streams) ? json.streams[0] : undefined;
@@ -645,7 +650,7 @@ function planKeyOf(output: AutoCutOutput): unknown {
 
 /** Chặn chạy chồng job trên cùng một phiên cắt (queue chạy tuần tự nhưng vẫn phải chặn ở API) */
 function assertNotBusy(meta: AutoCutMeta): void {
-  if (db.hasActiveJobForProject(meta.id)) {
+  if (db.hasActiveJobForProject(meta.id, "auto-cut")) {
     throw new HttpError(
       409,
       "BUSY",

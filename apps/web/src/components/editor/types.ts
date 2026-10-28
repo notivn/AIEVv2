@@ -50,6 +50,8 @@ export type EditorHighlightCue = TimelineHighlightCue;
 export type EditorAudio = TimelineAudio;
 /** Các khóa top-level của meta.json mà editor được ghi (plan mục 1). */
 export type EditorTimeline = Timeline;
+/** Một layer chồng (v2, docs/EDITOR-V2-PLAN.md mục 1.2) - suy từ `Timeline.layers`. */
+export type EditorLayer = NonNullable<Timeline["layers"]>[number];
 /** `project` trong response GET /timeline. */
 export type EditorProjectInfo = TimelineProject;
 /** Thời lượng/kích thước thật của một file media (ffprobe, cache theo mtime). */

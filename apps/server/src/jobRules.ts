@@ -1,4 +1,6 @@
+import path from "node:path";
 import { nanoid } from "nanoid";
+import { paths, repoRoot } from "./config.js";
 import * as db from "./db.js";
 import { broadcast } from "./events.js";
 import { briefOf, readMeta } from "./meta.js";
@@ -32,7 +34,7 @@ export function assertVideoJobAllowed(
   }
 
   // Quy tắc queue: từ chối job *-final nếu chưa có assemble-draft thành công cho project
-  if (type.endsWith("-final") && !db.hasDoneAssembleDraft(projectId)) {
+  if (type.endsWith("-final") && !db.hasDoneAssembleDraft(projectId, readMeta(projectId).createdAt)) {
     throw new HttpError(
       409,
       "DRAFT_REQUIRED",
@@ -54,6 +56,18 @@ export function assertVideoJobAllowed(
         409,
         "QC_REQUIRED",
         `Project "${projectId}" chưa qua QC tự động. ${howTo}`,
+      );
+    }
+    // QC phải đo ĐÚNG bản draft chuẩn (cùng luật với cổng final của agent.ts):
+    // POST /qc nhận `file` bất kỳ, report "pass" đo trên file khác không nói gì
+    // về bản draft sắp được lắp thành final
+    const draftAbs = path.join(paths.outputsDir, `${projectId}-draft.mp4`);
+    if (path.resolve(repoRoot, report.file) !== path.resolve(draftAbs)) {
+      throw new HttpError(
+        409,
+        "QC_REQUIRED",
+        `Kết quả QC của project "${projectId}" đo trên "${report.file}", không phải bản draft ` +
+          `outputs/${projectId}-draft.mp4. ${howTo}`,
       );
     }
     if (isQcReportStale(report)) {

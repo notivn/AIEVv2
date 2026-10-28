@@ -22,7 +22,7 @@ export const IMAGE_MODELS = [
 export const DEFAULT_IMAGE_MODEL = "gemini-3.1-flash-image";
 
 function geminiEndpoint(model: string): string {
-  return `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent`;
+  return `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(model)}:generateContent`;
 }
 
 /** GOOGLE_API_KEY thắng nếu có cả hai (theo hợp đồng API) */

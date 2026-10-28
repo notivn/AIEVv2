@@ -108,6 +108,11 @@ async function main() {
       missing.push(w);
       continue;
     }
+    // slug lấy từ danh mục tải qua mạng - chỉ nhận [a-z0-9_], để "../x" không thoát khỏi OUT_DIR
+    if (!/^[a-z0-9_]+$/.test(String(hit.slug))) {
+      missing.push(`${w} (slug lạ: ${String(hit.slug).slice(0, 40)})`);
+      continue;
+    }
     const file = `${hit.slug}.svg`;
     const dest = path.join(OUT_DIR, file);
     if (!fs.existsSync(dest)) {
@@ -118,7 +123,7 @@ async function main() {
       }
       const svg = await r.text();
       // Chặn rác: file phải thật sự là SVG, không phải trang lỗi của CDN
-      if (!svg.includes("<svg")) {
+      if (!svg.includes("<svg") || /<\s*([\w-]+:)?script\b|\son[a-z]+\s*=|javascript\s*:/i.test(svg)) {
         missing.push(`${w} (nội dung không phải SVG)`);
         continue;
       }

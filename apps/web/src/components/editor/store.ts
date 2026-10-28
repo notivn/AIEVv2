@@ -275,7 +275,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
  * identity - ops.ts giữ nguyên object của nhánh không đổi). Server chỉ validate
  * khóa được gửi, nên một khóa lỗi do AI ghi (vd `captions` sai kiểu) mà người
  * dùng không đụng tới sẽ KHÔNG chặn mọi lần lưu sửa scene/sfx. `saved` null
- * (chưa biết bản trên server, hoặc "Giữ bản của tôi") = gửi đủ cả 6 khóa.
+ * (chưa biết bản trên server, hoặc "Giữ bản của tôi") = gửi đủ cả 6 khóa (+ `layers`
+ * nếu timeline có).
  * subtitleStyle vắng mặt phải gửi `null` (PUT giữ nguyên khóa không gửi).
  */
 export function changedKeysPatch(tl: Timeline, saved: Timeline | null): TimelinePatch {
@@ -286,6 +287,12 @@ export function changedKeysPatch(tl: Timeline, saved: Timeline | null): Timeline
   if (!saved || tl.subtitles !== saved.subtitles) patch.subtitles = tl.subtitles;
   if (!saved || tl.overlays !== saved.overlays) patch.overlays = tl.overlays;
   if (!saved || tl.subtitleStyle !== saved.subtitleStyle) patch.subtitleStyle = tl.subtitleStyle ?? null;
+  // `layers` (v2) là khóa TÙY CHỌN: không đổi thì không gửi. Rỗng/vắng thì gửi
+  // `null` (= xóa khóa) thay vì `[]` - project chưa từng dùng layer giữ meta.json
+  // y như cũ, kể cả sau khi thêm rồi hoàn tác/xóa hết layer.
+  if (saved ? tl.layers !== saved.layers : tl.layers !== undefined) {
+    patch.layers = tl.layers && tl.layers.length > 0 ? tl.layers : null;
+  }
   return patch;
 }
 

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { TTS_CHUNK_MAX_CHARS } from "./textToVideoMeta.js";
+import { ffmpegSafeArgs } from "./ffmpegSafe.js";
 import { extractAudioWav } from "./transcribe.js";
 import type { TranslatedCue } from "./translateVideoMeta.js";
 import {
@@ -535,7 +536,7 @@ async function runFfmpeg(
 ): Promise<void> {
   let r: Awaited<ReturnType<typeof execFileCaptureAll>>;
   try {
-    r = await execFileCaptureAll("ffmpeg", ["-hide_banner", "-nostats", "-y", ...args], {
+    r = await execFileCaptureAll("ffmpeg", ffmpegSafeArgs(["-hide_banner", "-nostats", "-y", ...args]), {
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs ?? 300_000,
       isCanceled: opts.isCanceled,

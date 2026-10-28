@@ -20,12 +20,18 @@ import {
   Film,
   Highlighter,
   Image as ImageIcon,
+  Layers,
+  Lock,
+  LockOpen,
   Maximize2,
   Mic,
   Music,
   Plus,
   Sparkles,
+  Square,
   Subtitles,
+  Type,
+  Video,
   ZoomIn,
   ZoomOut,
   type LucideIcon,
@@ -38,15 +44,20 @@ import {
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
+  type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { Badge } from "@/components/Badge";
 import { IconButton } from "@/components/IconButton";
 import type { Timeline, TimelinePreview } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useEditor } from "./EditorContext";
 import {
   acceptedTracks,
+  FILE_DROP_TRACKS,
+  isFileDrag,
   readDragData,
   type DropTarget,
   type DropTrack,
@@ -58,11 +69,15 @@ import {
   highlightPartsOf,
   isCueSel,
   isMediaMissing,
+  isLayerWellFormed,
   isWellFormed,
+  layersOf,
   moveCue,
+  moveLayer,
   moveSfx,
   reorderScene,
   resizeCue,
+  resizeLayer,
   sceneIndexById,
   sceneInsertIndexAt,
   sceneKind,
@@ -72,6 +87,7 @@ import {
   type Selection,
 } from "./ops";
 import { usePlayheadFrame } from "./playback";
+import { useJobLabel, type TimelineAiAnchor, type TimelineAiJob } from "./TimelineAi";
 import { dragOwns, dragStep, type DragSession } from "./store";
 import {
   clampPps,
@@ -79,6 +95,7 @@ import {
   formatRulerLabel,
   formatSeconds,
   frameToPx,
+  packLanes,
   pxToFrame,
   rulerStep,
   ZOOM_MAX_PPS,
@@ -86,7 +103,8 @@ import {
   type SceneSpan,
 } from "./timing";
 
-const LABEL_W = 136;
+/** Cột tên track: icon + tên + nút "+" + nút khóa - hẹp hơn là tên bị cắt ("La…") */
+const LABEL_W = 164;
 /**
  * Bề ngang tối thiểu (px) của một khối - để còn bấm/kéo được. Ở mức zoom vừa
  * khung, cue 1-3 frame hay scene 1 frame chỉ rộng 1-2px: không ai bấm trúng.
@@ -101,10 +119,16 @@ const SNAP_PX = 8;
 /** Vùng sát mép khung cuộn tự cuộn theo khi kéo */
 const EDGE_SCROLL_PX = 32;
 
-type TrackKey = "scene" | "overlay" | "caption" | "subtitle" | "sfx" | "voice" | "music";
+type TrackKey = "scene" | "layer" | "overlay" | "caption" | "subtitle" | "sfx" | "voice" | "music";
 
 /** Track có nút "+" thêm cue tại playhead. */
 export type AddCueKind = "overlay" | "caption" | "subtitle";
+
+/** Menu "+" của track Layer: thêm layer chữ / khối màu tại playhead. */
+export type AddLayerKind = "text" | "shape";
+
+/** Chiều cao một làn (px) - bằng `.tl-row` để mọi track cùng nhịp. */
+const LANE_H = 32;
 
 type DragMode = "move" | "trim-start" | "trim-end" | "reorder" | "scrub";
 
@@ -154,7 +178,7 @@ const sliderToPps = (v: number): number =>
   ZOOM_MIN_PPS * Math.pow(ZOOM_MAX_PPS / ZOOM_MIN_PPS, v / 100);
 
 function encodeSel(sel: Selection): Record<string, string> {
-  if (sel.kind === "scene") return { "data-kind": "scene", "data-id": sel.id };
+  if (sel.kind === "scene" || sel.kind === "layer") return { "data-kind": sel.kind, "data-id": sel.id };
   if ("index" in sel) return { "data-kind": sel.kind, "data-index": String(sel.index) };
   return { "data-kind": sel.kind };
 }
@@ -163,9 +187,10 @@ function decodeSel(el: Element): Selection | null {
   const kind = el.getAttribute("data-kind");
   const index = Number(el.getAttribute("data-index"));
   switch (kind) {
-    case "scene": {
+    case "scene":
+    case "layer": {
       const id = el.getAttribute("data-id");
-      return id ? { kind: "scene", id } : null;
+      return id ? { kind, id } : null;
     }
     case "caption":
     case "subtitle":
@@ -210,7 +235,7 @@ function preciseBlockAt(hit: Element, frame: number): Element | null {
 }
 
 const selKey = (sel: Selection | null): string =>
-  !sel ? "" : sel.kind === "scene" ? `scene:${sel.id}` : "index" in sel ? `${sel.kind}:${sel.index}` : sel.kind;
+  !sel ? "" : "id" in sel ? `${sel.kind}:${sel.id}` : "index" in sel ? `${sel.kind}:${sel.index}` : sel.kind;
 
 export function TimelinePanel({
   timeline,
@@ -219,7 +244,13 @@ export function TimelinePanel({
   preview,
   height,
   onLibraryDrop,
+  onFilesDrop,
   onAddCue,
+  onAddLayer,
+  onAiAt,
+  aiJobs = [],
+  onAiJobClick,
+  hoverRef,
 }: {
   timeline: Timeline;
   spans: SceneSpan[];
@@ -229,12 +260,29 @@ export function TimelinePanel({
   height: number;
   /** Thả một món từ cột Thư viện lên timeline (trang lo chép file + sửa) */
   onLibraryDrop: (item: LibraryItem, target: DropTarget) => void;
+  /**
+   * Thả FILE từ máy lên timeline: `target` = track Video/Layer/SFX dưới con trỏ
+   * (tải lên rồi chèn vào đó), null = chỗ khác (chỉ tải vào thư viện).
+   */
+  onFilesDrop: (files: File[], target: DropTarget | null) => void;
   /** Nút "+" ở nhãn track: thêm cue tại playhead */
   onAddCue: (kind: AddCueKind) => void;
+  /** Menu "+" của track Layer: thêm layer chữ / khối màu tại playhead */
+  onAddLayer: (kind: AddLayerKind) => void;
+  /** Chuột phải trên thước/làn: "Tạo bằng AI tại đây" ở frame dưới con trỏ */
+  onAiAt?: (anchor: TimelineAiAnchor) => void;
+  /** Lượt AI neo theo mốc (đang chạy / lỗi) - vẽ thành mốc trên thước */
+  aiJobs?: TimelineAiJob[];
+  /** Bấm cờ của một lượt: đang chạy = thôi chờ, lỗi = đóng */
+  onAiJobClick?: (job: TimelineAiJob) => void;
+  /** Trang đọc mốc dưới con trỏ (phím G) - null khi chuột không ở trên làn */
+  hoverRef?: MutableRefObject<TimelineAiAnchor | null>;
 }) {
   const { t, tf } = useT();
   const editor = useEditor();
-  const { fps, readOnly, selection, playback } = editor;
+  const { fps, readOnly, selection, playback, locks, toggleLock } = editor;
+  const jobLabel = useJobLabel();
+  const runningAi = aiJobs.filter((j) => j.status === "running").length;
   // Timeline MỚI NHẤT đã render - khung kéo (requestAnimationFrame) đọc qua ref
   // để biết có ai sửa chen vào giữa lượt kéo không
   const timelineRef = useRef(timeline);
@@ -398,6 +446,41 @@ export function TimelinePanel({
     return Math.max(0, pxToFrame(clientX - rect.left + el.scrollLeft - LABEL_W, pps, fps));
   };
 
+  // ---- vạch giờ dưới con trỏ: cập nhật thẳng DOM - setState mỗi lần rê chuột là
+  // dựng lại cả trăm khối timeline
+  const hoverLineRef = useRef<HTMLSpanElement>(null);
+  const hoverLabelRef = useRef<HTMLSpanElement>(null);
+  const lastFrame = Math.max(0, totalFrames - 1);
+  const hideHover = () => {
+    if (hoverLineRef.current) hoverLineRef.current.style.display = "none";
+    if (hoverRef) hoverRef.current = null;
+  };
+  const showHover = (clientX: number, clientY: number) => {
+    const el = scrollRef.current;
+    const line = hoverLineRef.current;
+    if (!el || !line) return;
+    const rect = el.getBoundingClientRect();
+    if (dragRef.current || clientX < rect.left + LABEL_W) {
+      hideHover();
+      return;
+    }
+    const frame = Math.min(Math.round(frameAtClient(clientX)), lastFrame);
+    line.style.display = "block";
+    line.style.transform = `translateX(${LABEL_W + x(frame)}px)`;
+    if (hoverLabelRef.current) hoverLabelRef.current.textContent = formatSeconds(frame, fps);
+    if (hoverRef) hoverRef.current = { frame, clientX, clientY };
+  };
+
+  /** Chuột phải trên thước/làn → hỏi AI tại frame dưới con trỏ (nhãn track giữ menu của trình duyệt). */
+  const onContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const el = scrollRef.current;
+    if (!onAiAt || !el || dragRef.current) return;
+    if (e.clientX < el.getBoundingClientRect().left + LABEL_W) return;
+    e.preventDefault();
+    const frame = Math.min(Math.round(frameAtClient(e.clientX)), lastFrame);
+    onAiAt({ frame, clientX: e.clientX, clientY: e.clientY });
+  };
+
   /** Mọi mép có thể hít vào, trừ chính phần tử đang kéo. */
   const snapCandidates = (sel: Selection | null, mode: DragMode, sceneIndex: number): number[] => {
     const out = new Set<number>([0, playback.getFrame(), totalFrames]);
@@ -421,6 +504,11 @@ export function TimelinePanel({
     timeline.audio.sfx.forEach((s, i) => {
       if (sel?.kind === "sfx" && sel.index === i) return;
       if (s && Number.isFinite(s.atFrame)) out.add(s.atFrame);
+    });
+    layersOf(timeline).forEach((l) => {
+      if (!isLayerWellFormed(l) || (sel?.kind === "layer" && sel.id === l.id)) return;
+      out.add(l.from);
+      out.add(l.from + l.durationInFrames);
     });
     return [...out];
   };
@@ -463,6 +551,12 @@ export function TimelinePanel({
       if (drag.mode === "trim-end") return (origin) => resizeCue(origin, kind, sel.index, "end", delta);
     }
     if (sel.kind === "sfx" && drag.mode === "move") return (origin) => moveSfx(origin, sel.index, delta, lastFrame);
+    if (sel.kind === "layer") {
+      const id = sel.id;
+      if (drag.mode === "move") return (origin) => moveLayer(origin, id, delta, lastFrame);
+      if (drag.mode === "trim-start") return (origin) => resizeLayer(origin, id, "start", delta, editor.ops);
+      if (drag.mode === "trim-end") return (origin) => resizeLayer(origin, id, "end", delta, editor.ops);
+    }
     return null;
   };
 
@@ -483,15 +577,50 @@ export function TimelinePanel({
     if (accepted.length === 0) return null;
     const row = e.target instanceof Element ? e.target.closest(".tl-row[data-track]") : null;
     const under = row?.getAttribute("data-track") as TrackKey | null | undefined;
-    if (under && !(accepted as string[]).includes(under)) return { reject: under };
+    if (under && (!(accepted as string[]).includes(under) || locks.has(under))) return { reject: under };
     const track: DropTrack = under ? (under as DropTrack) : accepted[0];
+    // Thả ngoài mọi hàng = vào track mặc định của món đó - track đó khóa thì cũng cấm
+    if (locks.has(track)) return { reject: track };
+    return dropTargetFor(track, e);
+  };
+
+  /** Frame + vị trí chèn của một lượt thả lên `track` - sfx/layer hít như khi kéo khối (Alt tắt hít). */
+  const dropTargetFor = (track: DropTrack, e: ReactDragEvent<HTMLDivElement>): DropTarget => {
     let frame = Math.round(frameAtClient(e.clientX));
-    // Sfx hít vào playhead / mép phần tử khác như khi kéo khối (Alt tắt hít)
-    if (track === "sfx") frame += snapDelta(0, [frame], snapCandidates(null, "move", -1), e.altKey).delta;
+    if (track === "sfx" || track === "layer") {
+      frame += snapDelta(0, [frame], snapCandidates(null, "move", -1), e.altKey).delta;
+    }
     return { track, frame, sceneIndex: dropIndexAt(frame) };
   };
 
+  /**
+   * Đích của FILE kéo từ máy: track Video/Layer/SFX dưới con trỏ, còn lại null
+   * (chỉ vào thư viện - không bao giờ "cấm": thả đâu trong editor cũng tải lên được).
+   */
+  const fileTargetAt = (e: ReactDragEvent<HTMLDivElement>): DropTarget | null => {
+    const row = e.target instanceof Element ? e.target.closest(".tl-row[data-track]") : null;
+    const under = row?.getAttribute("data-track") as DropTrack | null | undefined;
+    // Track khóa: file chỉ vào thư viện, không chèn lên timeline
+    if (!under || !FILE_DROP_TRACKS.includes(under) || locks.has(under)) return null;
+    return dropTargetFor(under, e);
+  };
+
   const onDragOver = (e: ReactDragEvent<HTMLDivElement>) => {
+    if (isFileDrag([...e.dataTransfer.types])) {
+      // File từ máy: trang (VideoEditor) lo gợi ý chung + chặn khi chỉ đọc; ở đây
+      // chỉ tô làn sẽ nhận
+      if (readOnly) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      const target = fileTargetAt(e);
+      setLibReject(null);
+      setLibDrop((cur) =>
+        cur && target && cur.track === target.track && cur.frame === target.frame && cur.sceneIndex === target.sceneIndex
+          ? cur
+          : target,
+      );
+      return;
+    }
     const target = libraryTargetAt(e);
     if (!target) return;
     e.preventDefault();
@@ -534,6 +663,17 @@ export function TimelinePanel({
   }, []);
 
   const onDrop = (e: ReactDragEvent<HTMLDivElement>) => {
+    if (isFileDrag([...e.dataTransfer.types])) {
+      setLibDrop(null);
+      setLibReject(null);
+      if (readOnly) return; // handler chung của trang báo "AI đang sửa"
+      e.preventDefault();
+      // Handler chung của trang (thả ngoài timeline = chỉ vào thư viện) không xử lý lại
+      e.stopPropagation();
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) onFilesDrop(files, fileTargetAt(e));
+      return;
+    }
     const target = libraryTargetAt(e);
     setLibDrop(null);
     setLibReject(null);
@@ -548,6 +688,9 @@ export function TimelinePanel({
     const el = scrollRef.current;
     if (!el) return;
     const target = e.target;
+    // Cờ lượt AI nằm trên thước - bấm cờ là bấm nút, không phải tua
+    if (target.closest("[data-ai-mark]")) return;
+    hideHover();
     let blockEl = target.closest("[data-block]");
     const edgeEl = target.closest("[data-edge]");
     const onRuler = target.closest("[data-ruler]") !== null;
@@ -572,7 +715,9 @@ export function TimelinePanel({
       // preventDefault bên dưới (chặn bôi đen chữ lúc kéo) cũng chặn luôn việc
       // khối nhận focus - tự đưa focus vào để Enter/Delete/viền focus đúng khối
       if (blockEl instanceof HTMLElement) blockEl.focus({ preventScroll: true });
+      // Track khóa: chọn để xem được, không kéo/cắt
       if (readOnly || blockEl.getAttribute("data-static") === "true") return;
+      if (blockEl.closest(".tl-row")?.getAttribute("data-locked") === "true") return;
       const edge = edgeEl?.getAttribute("data-edge");
       if (edge === "start") mode = "trim-start";
       else if (edge === "end") mode = "trim-end";
@@ -603,6 +748,12 @@ export function TimelinePanel({
     } else if (sel?.kind === "sfx") {
       const sfx = timeline.audio.sfx[sel.index];
       if (sfx && Number.isFinite(sfx.atFrame)) edges = [sfx.atFrame];
+    } else if (sel?.kind === "layer") {
+      const layer = layersOf(timeline).find((l) => l?.id === sel.id);
+      if (isLayerWellFormed(layer)) {
+        const end = layer.from + layer.durationInFrames;
+        edges = mode === "move" ? [layer.from, end] : mode === "trim-start" ? [layer.from] : [end];
+      }
     }
 
     dragCounter.current += 1;
@@ -648,6 +799,7 @@ export function TimelinePanel({
   const dragOwnsTimeline = (drag: DragState): boolean => dragOwns(drag, timelineRef.current);
 
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) showHover(e.clientX, e.clientY);
     const drag = dragRef.current;
     const el = scrollRef.current;
     if (!drag || !el || e.pointerId !== drag.pointerId || drag.aborted) return;
@@ -766,6 +918,7 @@ export function TimelinePanel({
     invalid = false,
     broken = false,
     offsetPx = 0,
+    reactKey,
   }: {
     sel: Selection;
     start: number;
@@ -779,6 +932,8 @@ export function TimelinePanel({
     /** Scene không tính được độ dài - vẽ rộng hẳn ra để thấy và bấm sửa được */
     broken?: boolean;
     offsetPx?: number;
+    /** Key React riêng khi selection không định danh được khối (layer thiếu id) */
+    reactKey?: string;
   }): ReactNode => {
     const key = selKey(sel);
     const left = x(start);
@@ -797,7 +952,7 @@ export function TimelinePanel({
     ].join(" ");
     return (
       <div
-        key={key}
+        key={reactKey ?? key}
         role="button"
         tabIndex={0}
         aria-pressed={selected}
@@ -959,6 +1114,50 @@ export function TimelinePanel({
     });
   });
 
+  // Track Layer: layer chồng thời gian tự xếp thành nhiều làn (packLanes) - làn
+  // tính từ dữ liệu, không lưu: kéo một layer thì làn tự sắp lại
+  const layerList = layersOf(timeline);
+  const layerPack = packLanes(
+    layerList.map((l) => {
+      const start = num(l?.from, 0);
+      return { start, end: start + Math.max(1, num(l?.durationInFrames, 1)) };
+    }),
+  );
+  const layerLanes: ReactNode[][] = Array.from({ length: layerPack.count }, () => []);
+  layerList.forEach((layer, index) => {
+    const id = str(layer?.id);
+    const kind = str(layer?.kind);
+    const sel: Selection = { kind: "layer", id };
+    const ok = !!id && isWellFormed(timeline, sel);
+    const src = str(layer?.src);
+    const label =
+      kind === "text"
+        ? str(layer?.text).replace(/\n+/g, " / ") || t("editor.layers.kind-text")
+        : kind === "shape"
+          ? t("editor.layers.kind-shape")
+          : baseName(src) || t("editor.malformed.short");
+    const start = num(layer?.from, 0);
+    const end = start + Math.max(1, num(layer?.durationInFrames, 1));
+    const missing = (kind === "image" || kind === "video") && isMediaMissing(preview, src);
+    layerLanes[layerPack.lanes[index] ?? 0].push(
+      block({
+        sel,
+        start,
+        end,
+        label,
+        title: missing
+          ? tf("editor.timeline.block-missing", { name: label, file: src })
+          : `${label} (${secLabel(start)} - ${secLabel(end)})`,
+        icon: kind === "text" ? Type : kind === "shape" ? Square : kind === "video" ? Video : ImageIcon,
+        resizable: { start: ok, end: ok },
+        invalid: !ok || missing,
+        // Layer thiếu id thì không chọn/kéo được (selection theo id) - vẫn vẽ để thấy
+        staticBlock: !id,
+        reactKey: id ? undefined : `layer-broken-${index}`,
+      }),
+    );
+  });
+
   const voice = typeof timeline.audio.voice === "string" ? timeline.audio.voice : null;
   const voiceSec = voice ? preview.media[voice]?.durationSec : null;
   const voiceEnd =
@@ -972,8 +1171,11 @@ export function TimelinePanel({
     icon: LucideIcon;
     items: ReactNode[];
     extra?: ReactNode;
+    /** Track nhiều làn (Layer): mỗi phần tử là khối của một làn */
+    lanes?: ReactNode[][];
   }[] = [
     { key: "scene", label: t("editor.track.video"), icon: Film, items: sceneBlocks, extra: overlaps },
+    { key: "layer", label: t("editor.track.layer"), icon: Layers, items: layerLanes.flat(), lanes: layerLanes },
     { key: "overlay", label: t("editor.track.highlight"), icon: Highlighter, items: cueBlocks("overlay") },
     { key: "caption", label: t("editor.track.karaoke"), icon: Captions, items: cueBlocks("caption") },
     { key: "subtitle", label: t("editor.track.subtitle"), icon: Subtitles, items: cueBlocks("subtitle") },
@@ -1062,8 +1264,11 @@ export function TimelinePanel({
             {tf("editor.timeline.length", { time: formatSeconds(totalFrames, fps) })}
           </span>
           <span className="hidden text-meta text-[var(--text-muted)] lg:inline">
-            {t("editor.timeline.snap-hint")}
+            {onAiAt ? t("editor.timeline.snap-ai-hint") : t("editor.timeline.snap-hint")}
           </span>
+          {runningAi > 0 && (
+            <Badge tone="running" label={tf("editor.tlai.running-count", { n: runningAi })} />
+          )}
         </div>
         <div className="flex items-center gap-1">
           <IconButton label={t("editor.zoom-out")} onClick={() => zoomBy(1 / 1.5)} disabled={pps <= ZOOM_MIN_PPS}>
@@ -1105,6 +1310,8 @@ export function TimelinePanel({
         onPointerUp={(e) => finishDrag(e, false)}
         onPointerCancel={(e) => finishDrag(e, true)}
         onLostPointerCapture={(e) => finishDrag(e, false)}
+        onPointerLeave={hideHover}
+        onContextMenu={onContextMenu}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
@@ -1127,6 +1334,21 @@ export function TimelinePanel({
                 </span>
               ))}
               <PlayheadKnob pps={pps} />
+              {aiJobs.map((job) => (
+                <button
+                  key={job.id}
+                  type="button"
+                  data-ai-mark=""
+                  data-status={job.status}
+                  className="tl-ai-flag"
+                  style={{ left: x(job.frame) }}
+                  title={jobLabel(job)}
+                  aria-label={jobLabel(job)}
+                  onClick={() => onAiJobClick?.(job)}
+                >
+                  <Sparkles size={12} strokeWidth={2} aria-hidden="true" />
+                </button>
+              ))}
             </div>
           </div>
 
@@ -1136,6 +1358,8 @@ export function TimelinePanel({
               className="tl-row"
               data-track={track.key}
               data-drop={libDrop?.track === track.key ? "true" : libReject === track.key ? "reject" : undefined}
+              data-locked={locks.has(track.key) ? "true" : undefined}
+              style={track.lanes && track.lanes.length > 1 ? { height: LANE_H * track.lanes.length } : undefined}
             >
               <div className="tl-label text-meta font-medium" style={{ width: LABEL_W }}>
                 <span className="tl-label-swatch" aria-hidden="true" />
@@ -1145,30 +1369,61 @@ export function TimelinePanel({
                   <IconButton
                     label={addCueLabel[track.key]}
                     size="sm"
-                    disabled={readOnly}
+                    disabled={readOnly || locks.has(track.key)}
                     onClick={() => onAddCue(track.key as AddCueKind)}
                     data-add-cue={track.key}
                   >
                     <Plus size={13} strokeWidth={2} />
                   </IconButton>
                 )}
+                {track.key === "layer" && <AddLayerMenu disabled={readOnly || locks.has("layer")} onAdd={onAddLayer} />}
+                <IconButton
+                  label={tf(locks.has(track.key) ? "editor.lock.unlock-track" : "editor.lock.lock-track", {
+                    track: track.label,
+                  })}
+                  size="sm"
+                  aria-pressed={locks.has(track.key)}
+                  className="tl-lock"
+                  onClick={() => toggleLock(track.key)}
+                >
+                  {locks.has(track.key) ? (
+                    <Lock size={13} strokeWidth={2} />
+                  ) : (
+                    <LockOpen size={13} strokeWidth={2} />
+                  )}
+                </IconButton>
               </div>
-              <div className="tl-lane" data-lane="">
-                {track.extra}
-                {track.items}
-                {track.items.length === 0 && (
-                  <span className="tl-empty" style={{ left: viewport.left + 8 }}>
-                    {t("editor.track.empty")}
-                  </span>
-                )}
-                {track.key === "scene" && dropX !== null && (
-                  <span className="tl-drop" style={{ left: dropX }} aria-hidden="true" />
-                )}
-              </div>
+              {track.lanes ? (
+                <div className="tl-lane tl-lanes">
+                  {track.lanes.map((lane, i) => (
+                    <div key={i} className="tl-sublane" data-lane="">
+                      {lane}
+                      {i === 0 && track.items.length === 0 && (
+                        <span className="tl-empty" style={{ left: viewport.left + 8 }}>
+                          {t("editor.layers.empty")}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="tl-lane" data-lane="">
+                  {track.extra}
+                  {track.items}
+                  {track.items.length === 0 && (
+                    <span className="tl-empty" style={{ left: viewport.left + 8 }}>
+                      {t("editor.track.empty")}
+                    </span>
+                  )}
+                  {track.key === "scene" && dropX !== null && (
+                    <span className="tl-drop" style={{ left: dropX }} aria-hidden="true" />
+                  )}
+                </div>
+              )}
             </div>
           ))}
 
-          {libDrop?.track === "sfx" && (
+          {(libDrop?.track === "sfx" || libDrop?.track === "layer") && (
             <span className="tl-snap" style={{ left: LABEL_W + x(libDrop.frame) }} aria-hidden="true" />
           )}
           {dragView?.snapAt !== null && dragView?.snapAt !== undefined && (
@@ -1178,10 +1433,127 @@ export function TimelinePanel({
               aria-hidden="true"
             />
           )}
+          {aiJobs.map((job) => (
+            <span
+              key={job.id}
+              className="tl-ai-line"
+              data-status={job.status}
+              style={{ left: LABEL_W + x(job.frame) }}
+              aria-hidden="true"
+            />
+          ))}
+          <span ref={hoverLineRef} className="tl-hover" style={{ display: "none" }} aria-hidden="true">
+            <span ref={hoverLabelRef} className="tl-hover-label" />
+          </span>
           <PlayheadLine pps={pps} />
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * Nút "+" của track Layer - menu hai mục (chữ / khối màu) theo mẫu menu-button
+ * của WAI-ARIA như menu "Thêm" ở thanh trên. Menu đặt `position: fixed` theo
+ * vị trí nút: nhãn track và khung cuộn đều cắt phần tràn (overflow), menu nằm
+ * trong chúng là bị cắt mất.
+ */
+function AddLayerMenu({ disabled, onAdd }: { disabled: boolean; onAdd: (kind: AddLayerKind) => void }) {
+  const { t } = useT();
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const open = pos !== null;
+
+  const items = (): HTMLButtonElement[] =>
+    Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+  const close = useCallback((refocus: boolean) => {
+    setPos(null);
+    if (refocus) rootRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    items()[0]?.focus();
+    const onDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && rootRef.current?.contains(e.target)) return;
+      if (e.target instanceof Node && menuRef.current?.contains(e.target)) return;
+      close(false);
+    };
+    // Esc khi menu mở CHỈ đóng menu (bắt ở pha capture, chặn lan - không bỏ chọn)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      close(true);
+    };
+    const onScroll = () => close(false);
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open, close]);
+
+  const toggle = () => {
+    if (open) {
+      close(false);
+      return;
+    }
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (rect) setPos({ left: rect.left, top: rect.bottom + 4 });
+  };
+
+  const pick = (kind: AddLayerKind) => {
+    close(true);
+    onAdd(kind);
+  };
+
+  return (
+    <span ref={rootRef} className="flex">
+      <IconButton
+        label={t("editor.layers.add")}
+        size="sm"
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={toggle}
+      >
+        <Plus size={13} strokeWidth={2} />
+      </IconButton>
+      {pos && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={t("editor.layers.add")}
+          className="editor-menu tl-add-menu"
+          style={{ left: pos.left, top: pos.top }}
+          onKeyDown={(e) => {
+            const list = items();
+            const i = list.findIndex((el) => el === document.activeElement);
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              const next = e.key === "ArrowDown" ? (i + 1) % list.length : (i - 1 + list.length) % list.length;
+              list[next]?.focus();
+            } else if (e.key === "Tab") {
+              close(false);
+            }
+          }}
+        >
+          <button type="button" role="menuitem" className="editor-menu-item" onClick={() => pick("text")}>
+            <Type size={16} strokeWidth={1.75} aria-hidden="true" />
+            {t("editor.layers.add-text")}
+          </button>
+          <button type="button" role="menuitem" className="editor-menu-item" onClick={() => pick("shape")}>
+            <Square size={16} strokeWidth={1.75} aria-hidden="true" />
+            {t("editor.layers.add-shape")}
+          </button>
+        </div>
+      )}
+    </span>
   );
 }
 

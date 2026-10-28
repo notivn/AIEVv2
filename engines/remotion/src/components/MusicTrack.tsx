@@ -31,6 +31,9 @@ export const MusicTrack: React.FC<{ music: Music }> = ({ music }) => {
   const mediaSrc = useMediaSrc();
   const errorProps = useMediaErrorProps();
 
+  // music.fadeInSec/fadeOutSec (EDITOR-V2 mục 1.4) ghi đè hằng số khi có
+  const fadeInSec = music.fadeInSec ?? FADE_IN_SEC;
+  const fadeOutSec = music.fadeOutSec ?? FADE_OUT_SEC;
   const rampFrames = Math.max(1, DUCK_RAMP_SEC * fps);
   const half = rampFrames / 2;
 
@@ -53,17 +56,24 @@ export const MusicTrack: React.FC<{ music: Music }> = ({ music }) => {
     }
     const level = music.volume + (music.duckVolume - music.volume) * duckAmount;
 
-    // Envelope fade-in đầu / fade-out cuối video
-    const fadeIn = interpolate(f, [0, FADE_IN_SEC * fps], [0, 1], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    });
-    const fadeOut = interpolate(
-      f,
-      [durationInFrames - 1 - FADE_OUT_SEC * fps, durationInFrames - 1],
-      [1, 0],
-      { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-    );
+    // Envelope fade-in đầu / fade-out cuối video. 0 giây = không fade (inputRange
+    // [0, 0] không tăng dần - interpolate ném lỗi, nên tách nhánh)
+    const fadeIn =
+      fadeInSec > 0
+        ? interpolate(f, [0, fadeInSec * fps], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          })
+        : 1;
+    const fadeOut =
+      fadeOutSec > 0
+        ? interpolate(
+            f,
+            [durationInFrames - 1 - fadeOutSec * fps, durationInFrames - 1],
+            [1, 0],
+            { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+          )
+        : 1;
     return Math.max(0, level * Math.min(fadeIn, fadeOut));
   };
 

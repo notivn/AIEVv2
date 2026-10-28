@@ -40,6 +40,7 @@ import {
   type TimelineKey,
 } from "../timeline.js";
 import { parseModelEffort } from "./providers.js";
+import { openProjectEditSession } from "./projects.js";
 import { readMusicLibrary } from "./music.js";
 import { readLibrary } from "./sfx.js";
 import { HttpError, ensureDir, fileKind } from "../util.js";
@@ -251,7 +252,7 @@ router.post("/:id/timeline/revisions/:rev/restore", (req, res) => {
   } catch (err) {
     console.warn(`[timeline] Không chụp được lịch sử trước khi khôi phục ${id}:`, err);
   }
-  // Thay CẢ 6 khóa: khóa null trong bản lịch sử = lúc đó chưa có → xóa khỏi meta.
+  // Thay MỌI khóa timeline (TIMELINE_KEYS, gồm cả layers): khóa null trong bản lịch sử = lúc đó chưa có → xóa khỏi meta.
   // Khôi phục đúng nguyên trạng, không validate lại: bản đó từng là trạng thái
   // thật của project, và đây là lối thoát khi bản hiện tại hỏng.
   const next = writeTimelineKeys(id, revision.timeline);
@@ -564,6 +565,91 @@ router.post("/:id/editor/chat", (req, res) => {
 
   // Trả 202 NGAY rồi chạy agent nền - cùng thứ tự với /api/chat (SSE kênh `agent`)
   res.status(202).json({ sessionId });
+  void runAgent(sessionId, prompt);
+});
+
+// ------------------------------------------------------------------ Giao cho AI (handoff)
+
+/** Trần độ dài yêu cầu bàn giao - đủ cho một đoạn mô tả dài, chặn dán nhầm cả file */
+const MAX_HANDOFF_INSTRUCTION_LEN = 8000;
+
+/**
+ * POST /api/projects/:id/editor/handoff - { instruction, finishMode?, model?, effort? }
+ * → 202 { sessionId, finishMode, beforeRev }
+ *
+ * Chế độ "Tôi giám sát" → "Giao cho AI" (docs/EDITOR-V2-PLAN.md mục 3): mở phiên AI
+ * edit làm TIẾP từ timeline hiện tại. Khác hẳn /editor/chat (goal null, một lượt
+ * sửa nhỏ): đây là phiên dựng video (goal 'draft' mặc định | 'final') có gate +
+ * auto-resume, prompt = prompt edit chuẩn + khối "giữ chỉnh sửa tay".
+ *
+ * Chụp "ai-before" TRƯỚC khi agent chạy và trả `beforeRev` - nút "Hoàn tác" của
+ * trình chỉnh sửa khôi phục đúng bản này. snapshotTimeline bỏ qua khi bản mới
+ * nhất đã cùng version (vd tự lưu của editor vừa chụp) → khi đó beforeRev là bản
+ * mới nhất đó, khôi phục ra cùng một timeline.
+ */
+router.post("/:id/editor/handoff", (req, res) => {
+  const id = req.params.id;
+  const meta = readMeta(id); // 404 nếu không có
+  const body = (req.body ?? {}) as Obj;
+  if (body.instruction !== undefined && typeof body.instruction !== "string") {
+    throw new HttpError(400, "INVALID_INSTRUCTION", "instruction phải là chuỗi");
+  }
+  const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";
+  if (!instruction) {
+    throw new HttpError(400, "INSTRUCTION_REQUIRED", "Thiếu instruction - AI cần biết phải làm tiếp gì");
+  }
+  if (instruction.length > MAX_HANDOFF_INSTRUCTION_LEN) {
+    throw new HttpError(
+      400,
+      "INSTRUCTION_TOO_LONG",
+      `instruction tối đa ${MAX_HANDOFF_INSTRUCTION_LEN} ký tự`,
+    );
+  }
+  const rawMode = body.finishMode;
+  if (rawMode !== undefined && rawMode !== null && rawMode !== "draft" && rawMode !== "final") {
+    throw new HttpError(400, "INVALID_FINISH_MODE", 'finishMode phải là "draft" hoặc "final"');
+  }
+  // Mặc định "draft" (KHÔNG theo brief): người dùng đang ngồi giám sát trong
+  // trình chỉnh sửa, AI làm xong thì quay lại cho họ duyệt
+  const finishMode = rawMode === "final" ? "final" : "draft";
+  const { model, effort } = parseModelEffort(body); // 400 nếu không hợp lệ
+
+  // Một project một agent: hai phiên cùng sửa meta.json là ghi đè lẫn nhau
+  if (db.listChatSessions(id).some((s) => isAgentBusy(s.sessionId))) {
+    throw new HttpError(
+      409,
+      "AGENT_BUSY",
+      "Phiên AI của project đang chạy - đợi xong (hoặc dừng nó) rồi mới giao tiếp",
+    );
+  }
+
+  const label = `Giao cho AI: ${instruction.slice(0, 60)}`;
+  let beforeRev: string | null = null;
+  try {
+    const snap = snapshotTimeline(id, "ai-before", label, meta);
+    if (snap) {
+      beforeRev = snap.rev;
+    } else {
+      const newest = listRevisions(id)[0];
+      if (newest && newest.version === timelineVersion(meta)) beforeRev = newest.rev;
+    }
+  } catch (err) {
+    // Lịch sử là lưới an toàn phụ - đĩa đầy/meta lạ không được chặn việc giao cho AI
+    console.warn(`[handoff] Không chụp được ai-before cho ${id}:`, err);
+  }
+
+  const { sessionId, prompt } = openProjectEditSession({
+    id,
+    meta,
+    model,
+    effort,
+    finishMode,
+    handoffInstruction: instruction,
+  });
+
+  // Trả 202 NGAY rồi chạy agent nền (SSE kênh `agent`); runAgent đặt cờ chạy đồng
+  // bộ trước lần await đầu nên từ đây trình chỉnh sửa bị khóa ghi (AGENT_BUSY)
+  res.status(202).json({ sessionId, finishMode, beforeRev });
   void runAgent(sessionId, prompt);
 });
 

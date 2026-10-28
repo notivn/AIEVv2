@@ -8,13 +8,15 @@
  */
 
 import { Loader2, Plus, X } from "lucide-react";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getGeminiImageModels,
+  getImageProviders,
   type ImageAspect,
   type ImageKind,
   type ImageOverlay,
   type ImageProjectStatus,
+  type ImageProvidersResponse,
   type ImageTextPosition,
   type ProviderModel,
 } from "@/lib/api";
@@ -53,6 +55,155 @@ export function useGeminiImageModels() {
   }, []);
 
   return { models, loading, load };
+}
+
+// ---- Nhà cung cấp tạo ảnh (docs/EDITOR-V2-PLAN.md §4.3) ----
+//
+// Ô "model" của ảnh minh họa / Images Project nhận thêm giá trị provider:
+// "auto", "chatgpt-web", "gemini-web". Id model Gemini API cũ giữ nguyên nghĩa
+// (= provider gemini-api), nên brief/project cũ không đổi gì.
+
+/** Giá trị provider chọn thẳng trong ô model (ngoài các id model Gemini API). */
+export const IMAGE_PROVIDER_VALUES = ["auto", "chatgpt-web", "gemini-web"] as const;
+export type ImageProviderValue = (typeof IMAGE_PROVIDER_VALUES)[number];
+
+// KEY dictionary - dịch bằng t() lúc render
+const IMAGE_PROVIDER_LABEL: Record<ImageProviderValue, string> = {
+  auto: "conn.imageProvider.auto",
+  "chatgpt-web": "conn.imageProvider.chatgpt-web",
+  "gemini-web": "conn.imageProvider.gemini-web",
+};
+
+/**
+ * GET /api/image-providers - mỗi lần mount một lần fetch (không cache module):
+ * trạng thái "đã cấu hình" đổi ngay khi người dùng thêm tài khoản ở trang Kết
+ * nối, cache lại là ô chọn cứ báo "chưa cấu hình" cho tới khi tải lại trang.
+ * Server cũ chưa có endpoint → `failed`, ô chọn hiện đúng như trước (chỉ model
+ * Gemini API).
+ */
+export function useImageProviders() {
+  const [info, setInfo] = useState<ImageProvidersResponse | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    getImageProviders()
+      .then((r) => {
+        if (alive) setInfo(r);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return { info, failed };
+}
+
+/** Provider web (ChatGPT / Gemini web) đã cấu hình chưa - "auto" luôn chọn được. */
+function providerConfigured(
+  info: ImageProvidersResponse | null,
+  value: ImageProviderValue
+): boolean {
+  if (value === "auto") return true;
+  return info?.providers.some((p) => p.id === value && p.configured) ?? false;
+}
+
+/**
+ * Trạng thái ô chọn model ảnh dùng chung cho BriefFields, ImageProjectFields và
+ * trang images/[id]: các option provider, giá trị đã lưu có nằm ngoài danh sách
+ * không (`missing` → hiện id thô), và câu gợi ý khi có provider chưa cấu hình.
+ */
+export function useImageModelChoices(
+  current: string | null,
+  geminiModels: ProviderModel[]
+) {
+  const { t, tf } = useT();
+  const { info, failed } = useImageProviders();
+  // Chưa có dữ liệu provider (đang tải / server cũ) → không vẽ nhóm provider
+  const showProviders = info !== null && !failed;
+  const providerOptions = showProviders
+    ? IMAGE_PROVIDER_VALUES.map((value) => {
+        const configured = providerConfigured(info, value);
+        return {
+          value,
+          label: t(IMAGE_PROVIDER_LABEL[value]),
+          configured,
+          // Không khóa option đang được chọn: <select> với giá trị bị disabled
+          // hiện sai trạng thái - thay vào đó gợi ý dưới ô báo rõ lý do
+          disabled: !configured && current !== value,
+        };
+      })
+    : [];
+  const missing =
+    current !== null &&
+    !geminiModels.some((m) => m.id === current) &&
+    !providerOptions.some((o) => o.value === current);
+  const unconfigured = providerOptions.filter((o) => !o.configured);
+  const selectedUnconfigured = unconfigured.find((o) => o.value === current);
+  const hint = selectedUnconfigured
+    ? tf("conn.imageProvider.selected-not-configured", {
+        name: selectedUnconfigured.label,
+      })
+    : unconfigured.length > 0
+      ? tf("conn.imageProvider.picker-hint", {
+          names: unconfigured.map((o) => o.label).join(", "),
+        })
+      : undefined;
+  /** Có provider web nào dùng được không - để bỏ cảnh báo "thiếu GEMINI_API_KEY". */
+  const anyWebConfigured = providerOptions.some(
+    (o) => o.value !== "auto" && o.configured
+  );
+  return { providerOptions, missing, hint, anyWebConfigured };
+}
+
+/**
+ * Các <option> của ô chọn model ảnh: "Mặc định" → nhóm Nhà cung cấp → nhóm
+ * Gemini API. Provider chưa cấu hình bị khóa, kèm đuôi "chưa cấu hình".
+ */
+export function ImageModelOptions({
+  current,
+  geminiModels,
+  choices,
+}: {
+  current: string | null;
+  geminiModels: ProviderModel[];
+  choices: ReturnType<typeof useImageModelChoices>;
+}) {
+  const { t } = useT();
+  const { providerOptions, missing } = choices;
+  return (
+    <>
+      <option value="">{t("images.model-default")}</option>
+      {missing && current !== null && <option value={current}>{current}</option>}
+      {providerOptions.length > 0 && (
+        <optgroup label={t("conn.imageProvider.group-providers")}>
+          {providerOptions.map((o) => (
+            <option key={o.value} value={o.value} disabled={o.disabled}>
+              {o.configured
+                ? o.label
+                : `${o.label} - ${t("conn.imageProvider.not-configured-suffix")}`}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      {providerOptions.length > 0 ? (
+        <optgroup label={t("conn.imageProvider.gemini-api")}>
+          {geminiModels.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </optgroup>
+      ) : (
+        geminiModels.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))
+      )}
+    </>
+  );
 }
 
 // ---- Nhãn & options ----
@@ -328,9 +479,8 @@ export function ImageProjectFields({
   } = useGeminiImageModels();
   // Chưa fetch live → tạm hiển thị danh sách tĩnh từ /api/providers
   const modelOptions = liveModels ?? geminiModels;
-  // Model đã lưu không (chưa) nằm trong danh sách → vẫn hiển thị bằng id thô
-  const modelMissing =
-    model !== null && !modelOptions.some((m) => m.id === model);
+  // Provider (Tự động / ChatGPT web / Gemini web) + model đã lưu nằm ngoài danh sách
+  const modelChoices = useImageModelChoices(model, modelOptions);
 
   function patchOverlay(patch: Partial<ImageOverlay>) {
     onChange({ overlay: { ...overlay, ...patch } });
@@ -396,7 +546,7 @@ export function ImageProjectFields({
                 {t("images.loading-models")}
               </span>
             ) : (
-              t("imageForm.model-hint")
+              modelChoices.hint ?? t("imageForm.model-hint")
             )
           }
         >
@@ -408,13 +558,11 @@ export function ImageProjectFields({
             onFocus={loadModels}
             onChange={(e) => onChange({ model: e.target.value || null })}
           >
-            <option value="">{t("images.model-default")}</option>
-            {modelMissing && <option value={model!}>{model}</option>}
-            {modelOptions.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
+            <ImageModelOptions
+              current={model}
+              geminiModels={modelOptions}
+              choices={modelChoices}
+            />
           </select>
         </Field>
       )}

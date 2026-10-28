@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { verifyTrim, type TrimAggressiveness, type WordSpan } from "./autoTrim.js";
 import { repoRoot } from "./config.js";
+import { ffmpegSafeArgs, ffprobeSafeArgs } from "./ffmpegSafe.js";
 import { briefOf, projectDirOf, readMeta, type ProjectMeta } from "./meta.js";
 import { readProjectTranscript } from "./transcript.js";
 import { ensureDir, execFileCaptureAll, nowIso, toRepoRel } from "./util.js";
@@ -193,7 +194,7 @@ function errText(err: unknown): string {
 }
 
 async function runFfmpeg(args: string[]): Promise<{ out: string; timedOut: boolean }> {
-  const r = await execFileCaptureAll("ffmpeg", ["-hide_banner", "-nostats", ...args], {
+  const r = await execFileCaptureAll("ffmpeg", ffmpegSafeArgs(["-hide_banner", "-nostats", ...args]), {
     timeoutMs: FFMPEG_TIMEOUT_MS,
   });
   // ffmpeg ghi kết quả đo ra stderr; metadata=print có thể ra stdout tùy build -
@@ -245,7 +246,7 @@ async function probeFile(fileAbs: string): Promise<ProbeResult> {
   };
   const r = await execFileCaptureAll(
     "ffprobe",
-    [
+    ffprobeSafeArgs([
       "-v",
       "error",
       "-show_entries",
@@ -253,7 +254,7 @@ async function probeFile(fileAbs: string): Promise<ProbeResult> {
       "-of",
       "json",
       fileAbs,
-    ],
+    ]),
     { timeoutMs: 30_000 },
   );
   if (r.timedOut) return { ...base, error: "ffprobe quá thời gian" };

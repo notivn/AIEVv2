@@ -107,11 +107,19 @@ Send an empty list if you approved nothing - the measured silences still get cut
 
 1. Re-analyzes with the transcript guard, merges the silence ranges with your approved ranges
    (overlaps merged, so nothing is double counted).
-2. Drops any approved range that would swallow a word midpoint - a last safety net over your review,
-   and it logs every range it rejects. Rejected ranges in the log mean you approved something that
-   sits on real speech; go back and re-read that spot.
+2. Drops any approved range that CUTS THROUGH a word (contains the word's midpoint while one edge of
+   the word sticks out by more than 0.02s) - a last safety net over your review, and it logs every
+   range it rejects. Words lying wholly inside an approved range are the ones you chose to remove,
+   so they are cut. Rejected ranges in the log mean your range splits a word; widen it to the word
+   edges or re-read that spot. (Until 2026-10 the job dropped every range containing ANY word
+   midpoint, which silently threw away every approved filler/stutter/repeat-take - `approvedSec`
+   was always 0.)
 3. Cuts in ONE ffmpeg pass (`trim/atrim + setpts/asetpts + concat`), writing `assets/<stem>.cut.mp4`.
-4. Remaps every timestamp into the cut timeline -> `assets/transcript.cut.json`.
+   Keep edges are first moved to the gap between two video frames: `trim` keeps whole frames while
+   `atrim` cuts to the sample, and `concat` pads each piece to the longer stream - unaligned, every
+   join added a few ms (measured: 216 pieces at 30fps drifted +1.17s, so captions ran early).
+4. Remaps every timestamp into the cut timeline -> `assets/transcript.cut.json`, using the SAME
+   frame-aligned ranges; a word with less than half of it left after the cut is dropped.
 5. Verifies the OUTPUT with the remapped words and writes `assets/auto-trim-report.json`.
 
 If nothing is worth cutting, the job deliberately does NOT produce a `.cut.mp4` (a re-encoded

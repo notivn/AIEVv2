@@ -150,7 +150,16 @@ export default function ProjectsPage() {
 
   const load = useCallback(async () => {
     try {
-      setProjects(await getProjects());
+      const list = await getProjects();
+      setProjects(list);
+      // Tag đang lọc mà không còn project nào mang (vừa xóa project cuối cùng có
+      // tag đó) → bỏ khỏi bộ lọc. Giữ lại là danh sách kẹt "không khớp" mà không
+      // còn chip nào để bấm bỏ - hết tag thì cả hàng chip biến mất.
+      const alive = new Set(list.flatMap((p) => p.tags ?? []));
+      setTagFilter((cur) => {
+        const next = cur.filter((tag) => alive.has(tag));
+        return next.length === cur.length ? cur : next;
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -100,6 +100,8 @@ function isEditorPath(pathname: string): boolean {
  * Chỉ dùng để nhãn aria nói đúng - bề rộng vẫn là việc của media query cùng số.
  */
 const NAV_AUTO_COLLAPSE = "(max-width: 1439.98px)";
+/** Panel phải thành drawer - khớp @media trong globals.css */
+const PANEL_DRAWER = "(max-width: 1279.98px)";
 
 /**
  * Logo GitHub dạng SVG inline. Lucide đã bỏ icon thương hiệu khỏi bộ chính nên
@@ -218,6 +220,8 @@ interface ShellPanelApi {
   slot: HTMLElement | null;
   /** Đăng ký "trang này có panel phải"; trả về hàm hủy đăng ký cho useEffect */
   register: (title: string) => () => void;
+  /** Mở panel ra cho người dùng thấy (bỏ gấp; dưới 1280px thì mở drawer) */
+  reveal: () => void;
 }
 
 const ShellPanelContext = createContext<ShellPanelApi | null>(null);
@@ -258,6 +262,13 @@ export function ShellRightPanel({
   return createPortal(children, api.slot);
 }
 
+/** Hàm mở panel phải (no-op ngoài Shell) - vd trình chỉnh sửa đẩy một việc sang chat AI */
+export function useRevealShellPanel(): () => void {
+  const api = useContext(ShellPanelContext);
+  return api?.reveal ?? noop;
+}
+const noop = () => {};
+
 // ================================== Shell ===================================
 
 export function Shell({ children }: { children: ReactNode }) {
@@ -270,6 +281,11 @@ export function Shell({ children }: { children: ReactNode }) {
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   /** Drawer dưới 1280px - trạng thái tạm thời của phiên, cố ý KHÔNG nhớ */
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Đổi trang thì đóng drawer: không đóng thì mở drawer rồi bấm Back sang trang
+  // không có panel, tới trang có panel kế tiếp drawer + nền tối tự bật lên.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname]);
   /** Chỉ để nhãn aria/tooltip nói đúng - bề rộng rail là việc của CSS */
   const [navCollapsed, setNavCollapsed] = useState(false);
 
@@ -351,9 +367,14 @@ export function Shell({ children }: { children: ReactNode }) {
     return () => setPanelTitle(null);
   }, []);
 
+  const reveal = useCallback(() => {
+    setPanelCollapsed(false);
+    if (window.matchMedia(PANEL_DRAWER).matches) setDrawerOpen(true);
+  }, [setPanelCollapsed]);
+
   const panelApi = useMemo<ShellPanelApi>(
-    () => ({ slot, register }),
-    [slot, register]
+    () => ({ slot, register, reveal }),
+    [slot, register, reveal]
   );
 
   // Trang mobile /m/<id> (điện thoại quét QR upload) - layout riêng tối giản,

@@ -19,11 +19,17 @@ export function ShortcutsModal({ open, onClose }: { open: boolean; onClose: () =
     { keys: [["S"]], label: t("editor.keys.split") },
     { keys: [["Delete"], ["Backspace"]], label: t("editor.keys.delete") },
     { keys: [[mod, "D"]], label: t("editor.keys.duplicate") },
+    { keys: [[mod, "C"], [mod, "V"]], label: t("editor.keys.copy-paste") },
+    { keys: [[mod, "]"], [mod, "["]], label: t("editor.keys.layer-z") },
     { keys: [[mod, "Z"]], label: t("editor.keys.undo") },
     { keys: [[mod, "Shift", "Z"], ["Ctrl", "Y"]], label: t("editor.keys.redo") },
     { keys: [["Esc"]], label: t("editor.keys.deselect") },
     { keys: [[mod, t("editor.keys.wheel")]], label: t("editor.keys.zoom") },
     { keys: [["Alt"]], label: t("editor.keys.no-snap") },
+    { keys: [["Shift"]], label: t("editor.keys.canvas-shift") },
+    { keys: [[t("editor.keys.dblclick")]], label: t("editor.keys.canvas-edit-text") },
+    { keys: [[t("editor.keys.right-click")], ["G"]], label: t("editor.keys.ai-at") },
+    { keys: [[t("editor.keys.lock-note")]], label: t("editor.keys.lock") },
     { keys: [["?"]], label: t("editor.keys.help") },
   ];
   return (

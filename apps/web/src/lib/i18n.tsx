@@ -67,13 +67,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   );
 
   const tf = useCallback(
-    (key: string, vars: Record<string, string | number>): string => {
-      let out = t(key);
-      for (const [k, v] of Object.entries(vars)) {
-        out = out.split(`{${k}}`).join(String(v));
-      }
-      return out;
-    },
+    (key: string, vars: Record<string, string | number>): string =>
+      // Thay MỘT lượt trên chuỗi gốc: thay lần lượt từng biến thì giá trị của
+      // biến trước (tên/nhãn người dùng gõ, vd "Intro {file}") bị biến sau thay
+      // tiếp. Placeholder không có trong vars thì giữ nguyên như trước.
+      t(key).replace(/\{(\w+)\}/g, (m, k: string) =>
+        Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m
+      ),
     [t]
   );
 

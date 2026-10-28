@@ -167,11 +167,11 @@ Every sub-comp (`data-composition-src`) renders in its own context → it inheri
 ## ⚠️ ENVIRONMENT (Windows)
 - **FFmpeg**: install with `winget install Gyan.FFmpeg`. The PATH change only applies to NEW shells → when calling `npx hyperframes`, prepend the bin to `$env:Path` inline:
   `$bin="C:\Users\<user>\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_*\ffmpeg-*-full_build\bin"; $env:Path="$bin;$env:Path"`
-- `npm install` at the repo root; `npx hyperframes browser ensure` (downloads its own Chromium).
+- Dependencies (npm packages, Chromium, faster-whisper in `.runtime/venv`, FFmpeg in `.runtime/bin`) are installed by `start/doctor.mjs` (the Doctor page). **Never run `npm install`, `pip install` or `winget` yourself** - the agent policy blocks them (see video-pipeline, "Agent sandbox"); if something is missing, stop and ask the user to run Doctor. `npx hyperframes browser ensure` is fine.
 - ⚠️ `npx hyperframes transcribe` needs an external `whisper-cpp` binary (NOT bundled) and an `.en` English-only model → **do not use it for Vietnamese**.
 
 ## Vietnamese TRANSCRIPTION
-Use **faster-whisper** (`pip install faster-whisper` - a wheel exists for Python 3.14):
+Use **faster-whisper** (installed by Doctor into `.runtime/venv`):
 ```python
 import sys; sys.stdout.reconfigure(encoding="utf-8")   # the Windows cp1252 console cannot print diacritics
 from faster_whisper import WhisperModel

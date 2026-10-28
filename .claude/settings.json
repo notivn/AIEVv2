@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm install:*)",
       "Bash(npm run:*)",
       "Bash(npx hyperframes:*)",
       "Bash(npx remotion:*)",
@@ -10,8 +9,6 @@
       "Bash(node:*)",
       "Bash(curl:*)",
       "Bash(python:*)",
-      "Bash(pip:*)",
-      "Bash(pip3:*)",
       "Bash(mkdir:*)",
       "Bash(cp:*)"
     ],
@@ -23,7 +20,18 @@
       "Read(~/.aws/**)",
       "Read(~/.config/gcloud/**)",
       "Edit(./.env)",
-      "Write(./.env)"
+      "Write(./.env)",
+      "Edit(./.claude/settings.json)",
+      "Write(./.claude/settings.json)",
+      "Edit(./.claude/settings.local.json)",
+      "Write(./.claude/settings.local.json)",
+      "Edit(./.mcp.json)",
+      "Write(./.mcp.json)",
+      "Bash(npm install:*)",
+      "Bash(npm i:*)",
+      "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python -m pip:*)"
     ]
   }
 }

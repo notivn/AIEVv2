@@ -199,6 +199,306 @@
       "motion": "Panel trượt vào kèm mờ nền phía sau. Con trỏ giả lập thao tác thật, bấm đâu có phản hồi đó. Chuyển cảnh bằng phóng vào một phần giao diện. Chữ sans hiện đại, cỡ chuẩn hệ thống.",
       "createdAt": "2026-08-04T13:01:22.752Z",
       "updatedAt": "2026-08-04T13:01:22.752Z"
+    },
+    {
+      "id": "vector-phat-sang",
+      "name": "Vector phát sáng (khoa học)",
+      "art": "Glowing science-explainer vector illustration: rounded friendly flat shapes with subtle soft gradients, gentle inner glow and rim light, deep dark backgrounds with tiny star or particle specks, layered parallax depth, cute simplified creatures and cosmic objects.",
+      "avoid": "no hard black outlines, no photographic texture, no realistic anatomy, no grunge, no harsh contrast",
+      "palette": "brand",
+      "motion": "Nhiều lớp parallax trôi chậm với tốc độ khác nhau, hạt sáng lơ lửng liên tục. Vật thể vào bằng phóng nhẹ kèm quầng sáng bừng lên. Chuyển cảnh bằng zoom xuyên qua một vật thể sang thế giới kế tiếp. Nhịp đều, mượt, tò mò.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "son-mai",
+      "name": "Tranh sơn mài",
+      "art": "Vietnamese son mai lacquer painting: many layers of lacquer polished to a deep glossy surface, gold and silver leaf, crushed eggshell inlay creating crackled white textures, rich vermilion red, deep black and warm brown lacquer tones, stylised figures and landscapes.",
+      "avoid": "no flat vector, no photographic realism, no 3D render, no pastel colours, no matte surfaces",
+      "palette": "loose",
+      "motion": "Hình hiện ra như lớp sơn được MÀI lộ dần: mask quét từ tối sang sáng, vàng lá lóe lên sau cùng. Dải sáng phản chiếu lướt chậm qua mặt tranh bóng. Nhịp trang trọng, chậm. Chữ serif mạ vàng, ít chữ.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "tranh-lua",
+      "name": "Tranh lụa Việt Nam",
+      "art": "Vietnamese silk painting: delicate translucent pigment washes on visible silk weave, soft muted earthy tones, fine ink contour lines, gentle atmospheric haze, poetic quiet scenes of figures, landscapes and daily life.",
+      "avoid": "no saturated colours, no hard vector edges, no heavy black outlines, no 3D render, no busy composition",
+      "palette": "loose",
+      "motion": "Hình hiện như màu THẤM vào lụa: mờ dần lên từ trong ra, không trượt. Camera trôi ngang rất chậm như cuộn tranh mở ra. Chuyển cảnh mờ chồng dài. Chữ serif mảnh hoặc thư pháp, đặt ở khoảng trống.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "gom-men-lam",
+      "name": "Gốm men lam",
+      "art": "Blue-and-white porcelain painting: cobalt blue underglaze brushwork on glossy white ceramic glaze, varied blue tonal washes, traditional floral, cloud and wave border motifs, subtle curved ceramic surface highlights, Chu Dau and Ming ware inspiration.",
+      "avoid": "no colours other than cobalt blue and white, no flat vector, no 3D plastic look, no photographic scenes",
+      "palette": "loose",
+      "motion": "Nét lam CHẠY như bút lông vẽ trên men, dày ở đầu nét. Họa tiết viền chạy vòng quanh khung rồi đứng yên làm khung tranh. Chuyển cảnh bằng xoay như bàn xoay gốm. Nhịp chậm, tinh tế.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "ukiyo-e",
+      "name": "Khắc gỗ Ukiyo-e",
+      "art": "Japanese ukiyo-e woodblock print: bold flowing outlines, flat areas of traditional pigment, Prussian blue and muted earth tones, stylised wave, cloud and wind patterns, visible woodgrain and washi paper texture, dramatic asymmetric composition.",
+      "avoid": "no 3D shading, no photographic realism, no anime styling, no modern gradients",
+      "palette": "loose",
+      "motion": "Các lớp màu in CHỒNG lần lượt như từng bản khắc, mỗi lớp một nhịp. Sóng và mây chuyển động theo đường cong cách điệu, lặp vòng. Camera trượt ngang kiểu tranh cuộn. Chữ dọc hoặc đặt trong ô chữ nhật như dấu triện.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "chu-dong",
+      "name": "Chữ động (kinetic typography)",
+      "art": "Minimal abstract background plates for kinetic typography: large calm fields of colour, subtle paper or film grain, simple geometric accents, lots of empty space reserved for text, no focal objects competing with type.",
+      "avoid": "no detailed scenes, no characters, no busy patterns, no text or letters in the image",
+      "palette": "brand",
+      "motion": "CHỮ LÀ NHÂN VẬT CHÍNH, hình ảnh chỉ làm nền. Từng từ vào đúng nhịp lời nói: phóng, xoay, tách chữ, đổi cỡ để nhấn từ khóa. Khung hình liên tục co giãn và xoay theo chữ. Rất ít ảnh minh họa, cắt nhanh theo nhịp.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "truyen-tranh-my",
+      "name": "Truyện tranh Mỹ (comic)",
+      "art": "American comic book art: bold inked outlines with confident brush weight, flat CMYK colours with Ben-Day dot shading, dynamic foreshortened poses, dramatic panel compositions, action burst shapes.",
+      "avoid": "no photorealism, no soft painterly blending, no 3D render, no manga screentone styling",
+      "palette": "brand",
+      "motion": "Mỗi ý là một Ô TRUYỆN: ô trượt vào lưới trang, camera nhảy từ ô này sang ô kia. Bong bóng thoại và chữ tượng thanh (BOOM, ZAP) bật ra với rung khung. Cắt cảnh nhanh, giật, nhiều năng lượng.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "pop-art",
+      "name": "Pop art",
+      "art": "1960s pop art: screen-printed look, bold flat saturated colour blocks, oversized Ben-Day halftone dots, thick black outlines, repeated grid of the same image in different colour variations, everyday objects made iconic.",
+      "avoid": "no subtle gradients, no muted tones, no photographic realism, no painterly texture",
+      "palette": "brand",
+      "motion": "Hình lặp thành LƯỚI 2x2 hoặc 3x3, mỗi ô đổi màu theo nhịp. Chấm halftone phóng to rồi thu lại khi nhấn. Cắt cảnh bằng đổi bảng màu tức thì, không mờ. Chữ đậm có viền đen dày.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "manga-den-trang",
+      "name": "Manga đen trắng",
+      "art": "Black-and-white manga page art: crisp pen ink lines, screentone dot and gradient shading, dramatic speed lines and focus lines, high-contrast spot blacks, expressive close-ups, paneled composition on white paper.",
+      "avoid": "no colour, no 3D render, no painterly blending, no western comic dot colouring",
+      "palette": "loose",
+      "motion": "Khung hình là các Ô MANGA chéo, camera lướt theo thứ tự đọc. Đường tập trung bung ra từ tâm khi nhấn ý. Hình hiện bằng nét mực vẽ dần rồi phủ tram. Chữ trong bong bóng thoại, chữ tượng thanh to và nghiêng.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "y2k-chrome",
+      "name": "Y2K chrome",
+      "art": "Y2K millennium aesthetic: liquid chrome and iridescent holographic surfaces, bubbly inflated 3D shapes, glossy reflections, translucent jelly plastic, sparkles and star glints, early-2000s digital optimism.",
+      "avoid": "no matte flat vector, no hand-drawn texture, no muted earthy colours, no grain",
+      "palette": "brand",
+      "motion": "Vật thể chrome xoay chậm, ánh phản chiếu chạy dọc bề mặt. Lấp lánh chớp ở góc mỗi khi chữ vào. Chữ phồng như bong bóng, bật nảy đàn hồi. Chuyển cảnh bằng gợn sóng lỏng hoặc biến hình mượt.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "3d-do-choi",
+      "name": "3D đồ chơi (claymorphism)",
+      "art": "Cute 3D toy-like illustration: soft rounded inflated shapes, smooth matte plastic and soft-touch materials, pastel-friendly lighting with soft ambient occlusion, chunky simplified characters and objects, playful miniature composition.",
+      "avoid": "no realistic textures, no sharp edges, no gritty detail, no hand-drawn lines, no photographic backgrounds",
+      "palette": "brand",
+      "motion": "Mọi thứ NẢY: vào bằng phóng từ 0 với easing đàn hồi, chạm đất thì bẹp nhẹ rồi bật lại. Vật thể lắc lư nhẹ khi đứng yên. Chuyển cảnh bằng khối tròn phóng to lấp màn hình. Chữ tròn, đậm, thân thiện.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "voxel",
+      "name": "Voxel khối vuông",
+      "art": "Voxel art 3D scene: everything built from small uniform cubes, clean blocky silhouettes, soft global lighting with gentle shadows, miniature diorama on a floating block island, playful game-world feel.",
+      "avoid": "no smooth curves, no organic surfaces, no 2D pixel flatness, no photographic textures",
+      "palette": "brand",
+      "motion": "Vật thể được LẮP từng khối rơi xuống xếp vào chỗ. Đảo khối xoay chậm như bàn trưng bày. Chuyển cảnh bằng tan thành khối vuông rồi ghép lại. Chữ font khối vuông hoặc pixel đậm.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "phan-bang-den",
+      "name": "Phấn bảng đen",
+      "art": "Chalk drawing on a dark green-black chalkboard: dusty chalk strokes with broken textured edges, soft pastel chalk colours, smudged erased traces in the background, hand-lettered labels, classroom diagram feel.",
+      "avoid": "no clean vector lines, no white background, no 3D render, no photographic elements",
+      "palette": "loose",
+      "motion": "Nét phấn VẼ DẦN với cạnh nhòe, có bụi phấn rơi nhẹ. Ý cũ bị xóa bằng khăn quét để lại vệt mờ chứ không biến sạch. Chữ viết tay nghiêng. Nhịp như thầy giảng bài, dừng đúng chỗ nhấn.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "so-tay-but-bi",
+      "name": "Sổ tay bút bi",
+      "art": "Notebook doodle sketchnotes: blue ballpoint pen drawings on lined or grid notebook paper, quick hatching, arrows, boxes and hand lettering, a few highlighter marker accents, coffee-ring and page-margin details.",
+      "avoid": "no clean vector, no digital gradients, no 3D render, no painterly colour fills",
+      "palette": "brand",
+      "motion": "Nét bút bi vẽ dần, mũi tên nối các ý theo lời nói. Bút dạ quang QUÉT qua từ khóa đúng lúc đọc. Lật trang sổ để chuyển cảnh. Chữ viết tay, xếp như ghi chú bài giảng.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "son-dau",
+      "name": "Sơn dầu ấn tượng",
+      "art": "Impressionist oil painting: thick impasto brush strokes with visible directional texture, broken colour dabs, vibrant light and atmosphere, canvas weave visible in thin areas, expressive loose rendering of subjects.",
+      "avoid": "no vector sharpness, no flat colour fills, no 3D render, no photographic detail",
+      "palette": "brand",
+      "motion": "Nét cọ ĐẮP dần lên canvas theo hướng vẽ. Ảnh trôi và phóng rất chậm, ánh sáng lung linh nhẹ. Chuyển cảnh bằng nét cọ quét ngang phủ kín. Chữ serif cổ điển, ít và lớn.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "phac-chi-than",
+      "name": "Phác thảo chì than",
+      "art": "Graphite and charcoal sketch on toned paper: expressive gestural lines, cross-hatching and smudged shading, visible construction lines, white chalk highlights, unfinished sketchbook edges fading into the paper.",
+      "avoid": "no colour fills, no vector cleanliness, no 3D render, no digital gradients",
+      "palette": "loose",
+      "motion": "Nét phác chạy trước, rồi lớp tô bóng mới phủ vào - thấy được quá trình vẽ. Phần chưa nói tới để dạng nét dựng hình mờ. Chuyển cảnh bằng lật trang sổ phác. Nhịp suy tư, chậm vừa.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "film-noir",
+      "name": "Film noir đen trắng",
+      "art": "1940s film noir still: high-contrast black-and-white photography, hard low-key lighting, venetian-blind shadow stripes, wet streets, fog and cigarette smoke, dramatic silhouettes and tilted Dutch angles.",
+      "avoid": "no colour, no flat lighting, no cartoon, no cheerful bright scenes",
+      "palette": "loose",
+      "motion": "Ánh đèn quét chậm, bóng rèm trượt qua khung. Nhiễu phim và chớp sáng nhẹ chạy liên tục. Chuyển cảnh bằng đóng mở vòng tròn (iris) hoặc cắt thẳng. Chữ serif kiểu máy chữ, hồi hộp, nhịp chậm.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "dien-anh-35mm",
+      "name": "Điện ảnh phim nhựa 35mm",
+      "art": "Cinematic 35mm film still: anamorphic widescreen framing, teal-and-orange colour grade, natural film grain and halation around highlights, shallow depth of field, motivated practical lighting, storytelling composition.",
+      "avoid": "no illustration, no cartoon, no flat digital look, no oversaturated HDR",
+      "palette": "loose",
+      "motion": "Khung hình có DẢI ĐEN letterbox trên dưới. Camera dolly chậm, ánh lóe ống kính khi có nguồn sáng. Hạt phim chạy liên tục. Chuyển cảnh cắt thẳng theo nhịp kể; chữ nhỏ, căn giữa như phụ đề phim.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "scrapbook",
+      "name": "Sổ ảnh kỷ niệm (scrapbook)",
+      "art": "Nostalgic scrapbook page: polaroid and instant photos with white borders, washi tape strips, handwritten notes, stickers, pressed flowers and ticket stubs, layered on kraft or cream paper with soft shadows.",
+      "avoid": "no clean vector, no 3D render, no harsh grunge, no corporate polish",
+      "palette": "brand",
+      "motion": "Ảnh polaroid THẢ xuống trang hơi xoay lệch, băng dính dán theo. Ghi chú viết tay hiện dần bên cạnh. Camera trượt dọc trang sổ. Chuyển cảnh bằng lật trang. Nhịp ấm áp, hoài niệm.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "kinh-mau",
+      "name": "Kính màu ghép chì",
+      "art": "Stained glass window art: jewel-toned translucent glass panes separated by dark lead came lines, light shining through with glow and colour bleed, textured cathedral glass, symmetric decorative framing.",
+      "avoid": "no photographic realism, no soft gradients across lead lines, no 3D render, no flat opaque colours",
+      "palette": "brand",
+      "motion": "Từng mảnh kính SÁNG LÊN lần lượt như có nắng chiếu qua. Vệt sáng quét chéo khung. Chuyển cảnh bằng mảnh kính ghép lại hoặc vỡ tách ra. Nhịp trang nghiêm, đối xứng.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "art-deco",
+      "name": "Art Deco",
+      "art": "1920s Art Deco poster: bold geometric symmetry, gold metallic linework on deep black or navy, sunburst rays, stepped and fan motifs, elegant elongated figures, luxurious streamlined composition.",
+      "avoid": "no organic sloppy lines, no grunge, no cartoon, no pastel colours",
+      "palette": "loose",
+      "motion": "Đường vàng CHẠY NÉT đối xứng từ tâm ra hai bên. Tia nắng xòe ra sau tiêu đề. Chuyển cảnh bằng cửa mở đối xứng. Chữ display cao, mảnh, giãn chữ rộng. Nhịp sang trọng.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "memphis",
+      "name": "Memphis thập niên 80",
+      "art": "1980s Memphis design: playful clashing bright colours, squiggles, zigzags, confetti dots and terrazzo patterns, primitive geometric shapes floating with hard offset shadows, bold flat composition.",
+      "avoid": "no realism, no muted palette, no 3D render, no texture grain",
+      "palette": "brand",
+      "motion": "Hình khối và nét ngoằn ngoèo BAY vào từ mép khung, xoay và nảy. Họa tiết nền trôi lặp vòng. Chuyển cảnh bằng khối màu đổ ụp xuống. Chữ đậm, vui, hơi xoay lệch.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "neo-brutalism",
+      "name": "Neo-brutalism",
+      "art": "Neo-brutalist graphic design: flat bright colour blocks, thick black outlines on every shape, hard solid offset drop shadows, oversized raw typography areas, deliberately blunt layout, no decoration for decoration's sake.",
+      "avoid": "no soft shadows, no gradients, no rounded glossy UI, no photographic texture",
+      "palette": "brand",
+      "motion": "Thẻ và khối TRƯỢT vào rồi dừng cứng, bóng đổ cứng lệch theo. Khi nhấn, khối nhún xuống đè lên bóng của nó như nút bấm. Cắt cảnh dứt khoát, không mờ. Chữ cực to, đen, sans đậm.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "terminal-crt",
+      "name": "Màn hình terminal CRT",
+      "art": "Retro computer terminal on a CRT monitor: green or amber phosphor monospace text and ASCII diagrams on black, scanlines, curved screen glass with bloom and slight barrel distortion, hacker command-line aesthetic.",
+      "avoid": "no modern flat UI, no colour photography, no illustration, no rounded app components",
+      "palette": "loose",
+      "motion": "Chữ GÕ từng ký tự kèm con trỏ nhấp nháy. Vạch quét chạy dọc màn hình, nháy nhiễu khi chuyển cảnh. Sơ đồ ASCII hiện theo dòng. Chữ monospace toàn bộ, nhịp gõ phím.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "ban-do-co",
+      "name": "Bản đồ cổ",
+      "art": "Antique cartography: aged parchment map with ink linework, hand-lettered place names, compass rose, sea monsters and sailing ships, dotted travel routes, sepia washes, worn folds and torn edges.",
+      "avoid": "no modern GIS map look, no flat vector, no 3D render, no bright saturated colours",
+      "palette": "loose",
+      "motion": "Camera BAY trên bản đồ, đường hành trình đứt nét chạy dần theo câu chuyện. Địa danh và dấu mốc hiện như mực in xuống. Chuyển cảnh bằng cuộn giấy. Chữ serif cổ, nhịp kể chuyện lịch sử.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "sach-tranh-thieu-nhi",
+      "name": "Sách tranh thiếu nhi",
+      "art": "Children's picture book illustration: soft coloured pencil and crayon texture, gentle rounded characters, warm cosy palette, simple storybook scenes, visible paper tooth, charming slightly naive drawing.",
+      "avoid": "no harsh contrast, no realistic anatomy, no 3D render, no scary or dark themes",
+      "palette": "brand",
+      "motion": "Mỗi cảnh là một TRANG SÁCH, chuyển bằng lật trang. Nhân vật cử động nhẹ, lắc lư, chớp mắt. Chữ tròn, to, đặt như lời kể dưới tranh. Nhịp chậm, ấm, dễ theo.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "bong-cat",
+      "name": "Bóng cắt (silhouette)",
+      "art": "Silhouette shadow-puppet art: intricate solid black cut-out silhouettes of figures and scenery against a warm glowing backlit gradient sky, delicate lace-like cut details, layered depth by silhouette density.",
+      "avoid": "no interior detail inside silhouettes, no visible faces, no 3D shading, no photographic texture",
+      "palette": "loose",
+      "motion": "Bóng người cử động bằng cách XOAY KHỚP như rối bóng. Các lớp bóng trượt parallax trước nền trời sáng. Chuyển cảnh bằng nền trời đổi màu. Chữ mảnh, đặt ở vùng sáng, nhịp kể chuyện cổ tích.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "duotone",
+      "name": "Ảnh duotone",
+      "art": "Duotone photography: real photos mapped to exactly two bold colours, high contrast, graphic poster feel, clean cut-out subjects on solid colour fields, modern music-streaming campaign look.",
+      "avoid": "no full natural colour, no illustration, no busy multicolour scenes, no soft vintage fade",
+      "palette": "brand",
+      "motion": "Ảnh cắt nền TRƯỢT vào trên khối màu đặc, hơi phóng chậm. Mỗi lần nhấn đổi cặp màu duotone tức thì. Chuyển cảnh bằng khối màu quét. Chữ sans cực đậm chồng lên ảnh.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "khac-dong",
+      "name": "Tranh khắc đồng cổ",
+      "art": "Vintage copperplate engraving: fine cross-hatched and stippled linework in black ink, 19th-century encyclopedia illustration feel, scientific precision, off-white aged paper, ornamental borders and captions.",
+      "avoid": "no colour fills, no vector flatness, no 3D render, no modern photographic look",
+      "palette": "loose",
+      "motion": "Hình hiện bằng lớp nét đan DÀY DẦN như đang khắc. Kính lúp quét qua để phóng chi tiết. Chuyển cảnh bằng lật trang sách cổ. Chữ serif cổ điển kèm chú thích đánh số.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
+    },
+    {
+      "id": "editorial-toi-gian",
+      "name": "Tạp chí tối giản sang trọng",
+      "art": "Minimal luxury magazine editorial: refined still-life and product compositions, soft natural daylight, neutral beige, stone and linen textures, large calm negative space, high-end fashion and lifestyle photography.",
+      "avoid": "no clutter, no saturated neon, no cartoon, no glossy CGI look",
+      "palette": "brand",
+      "motion": "Rất CHẬM và ít: ảnh mờ dần lên, phóng cực nhẹ. Chữ serif lớn chạy giãn chữ, kèm dòng sans nhỏ. Bố cục lệch, chừa nhiều khoảng trắng. Chuyển cảnh mờ chồng dài, không hiệu ứng thừa.",
+      "createdAt": "2026-10-29T07:03:47.284Z",
+      "updatedAt": "2026-10-29T07:03:47.284Z"
     }
   ],
   "removedBuiltins": []

@@ -2249,7 +2249,7 @@ export const vi: Record<string, string> = {
   "vstyle.detail.delete-builtin":
     "Đây là phong cách mặc định - xóa rồi vẫn khôi phục lại được bằng nút \"Khôi phục bản gốc\" ở phong cách cùng mã.",
 
-  // -- Tên 20 phong cách --
+  // -- Tên 50 phong cách --
   "vstyle.giay-gap-nhat.name": "Gấp giấy Nhật Bản",
   "vstyle.vox-explainer.name": "Giải thích kiểu VOX",
   "vstyle.tranh-ve-tay.name": "Tranh vẽ tay (màu nước)",
@@ -2271,7 +2271,7 @@ export const vi: Record<string, string> = {
   "vstyle.cat-out-puppet.name": "Rối giấy cắt",
   "vstyle.giao-dien-app.name": "Giao diện app",
 
-  // -- Mô tả 20 phong cách --
+  // -- Mô tả 50 phong cách --
   "vstyle.giay-gap-nhat.desc":
     "Giấy gấp và cắt xếp lớp, thớ giấy washi, bóng đổ mềm giữa các lớp. Chuyển cảnh bằng gấp và lật.",
   "vstyle.vox-explainer.desc":
@@ -2312,6 +2312,99 @@ export const vi: Record<string, string> = {
     "Rối giấy cắt rời từng khớp, giấy thủ công, mép cắt hơi thô. Nhân vật cử động bằng cách xoay quanh khớp.",
   "vstyle.giao-dien-app.desc":
     "Panel giao diện kính mờ nổi trên nền, bóng đổ nhiều lớp, icon sắc nét. Con trỏ giả lập thao tác thật.",
+
+  // -- 30 phong cách thêm sau: tên + mô tả --
+  "vstyle.vector-phat-sang.name": "Vector phát sáng (khoa học)",
+  "vstyle.son-mai.name": "Tranh sơn mài",
+  "vstyle.tranh-lua.name": "Tranh lụa Việt Nam",
+  "vstyle.gom-men-lam.name": "Gốm men lam",
+  "vstyle.ukiyo-e.name": "Khắc gỗ Ukiyo-e",
+  "vstyle.chu-dong.name": "Chữ động (kinetic typography)",
+  "vstyle.truyen-tranh-my.name": "Truyện tranh Mỹ (comic)",
+  "vstyle.pop-art.name": "Pop art",
+  "vstyle.manga-den-trang.name": "Manga đen trắng",
+  "vstyle.y2k-chrome.name": "Y2K chrome",
+  "vstyle.3d-do-choi.name": "3D đồ chơi (claymorphism)",
+  "vstyle.voxel.name": "Voxel khối vuông",
+  "vstyle.phan-bang-den.name": "Phấn bảng đen",
+  "vstyle.so-tay-but-bi.name": "Sổ tay bút bi",
+  "vstyle.son-dau.name": "Sơn dầu ấn tượng",
+  "vstyle.phac-chi-than.name": "Phác thảo chì than",
+  "vstyle.film-noir.name": "Film noir đen trắng",
+  "vstyle.dien-anh-35mm.name": "Điện ảnh phim nhựa 35mm",
+  "vstyle.scrapbook.name": "Sổ ảnh kỷ niệm (scrapbook)",
+  "vstyle.kinh-mau.name": "Kính màu ghép chì",
+  "vstyle.art-deco.name": "Art Deco",
+  "vstyle.memphis.name": "Memphis thập niên 80",
+  "vstyle.neo-brutalism.name": "Neo-brutalism",
+  "vstyle.terminal-crt.name": "Màn hình terminal CRT",
+  "vstyle.ban-do-co.name": "Bản đồ cổ",
+  "vstyle.sach-tranh-thieu-nhi.name": "Sách tranh thiếu nhi",
+  "vstyle.bong-cat.name": "Bóng cắt (silhouette)",
+  "vstyle.duotone.name": "Ảnh duotone",
+  "vstyle.khac-dong.name": "Tranh khắc đồng cổ",
+  "vstyle.editorial-toi-gian.name": "Tạp chí tối giản sang trọng",
+
+  "vstyle.vector-phat-sang.desc":
+    "Vector bo tròn có gradient nhẹ và quầng sáng, nền tối lấm tấm hạt sáng. Nhiều lớp parallax, zoom xuyên vật thể để chuyển cảnh.",
+  "vstyle.son-mai.desc":
+    "Sơn mài Việt Nam: mặt bóng sâu, vàng bạc lá, vỏ trứng khảm, đỏ son và đen. Hình hiện như được mài lộ dần.",
+  "vstyle.tranh-lua.desc":
+    "Màu mỏng thấm trên mặt lụa, tông trầm dịu, nét viền mực mảnh. Hình thấm dần lên, camera trôi như cuộn tranh.",
+  "vstyle.gom-men-lam.desc":
+    "Họa tiết lam cobalt trên men trắng bóng, viền mây sóng cổ truyền. Nét lam chạy như bút lông vẽ trên gốm.",
+  "vstyle.ukiyo-e.desc":
+    "Tranh khắc gỗ Nhật: viền mềm đậm, màu phẳng cổ truyền, sóng mây cách điệu, thớ gỗ và giấy washi. Các lớp màu in chồng lần lượt.",
+  "vstyle.chu-dong.desc":
+    "Chữ là nhân vật chính, nền chỉ là mảng màu tối giản. Từng từ vào đúng nhịp lời nói, phóng, xoay, đổi cỡ để nhấn.",
+  "vstyle.truyen-tranh-my.desc":
+    "Nét mực đậm, màu phẳng tram chấm Ben-Day, dáng động mạnh. Mỗi ý là một ô truyện, chữ tượng thanh bật ra kèm rung.",
+  "vstyle.pop-art.desc":
+    "In lụa thập niên 60: màu đặc rực, chấm halftone to, viền đen dày, lưới hình lặp đổi màu. Đổi bảng màu tức thì theo nhịp.",
+  "vstyle.manga-den-trang.desc":
+    "Nét bút mực sắc, tram screentone, đường tốc độ và đường tập trung, ô truyện chéo. Camera lướt theo thứ tự đọc.",
+  "vstyle.y2k-chrome.desc":
+    "Chrome lỏng và ánh xà cừ, khối phồng bóng như thạch, lấp lánh kiểu đầu thập niên 2000. Chữ phồng nảy đàn hồi.",
+  "vstyle.3d-do-choi.desc":
+    "Khối 3D tròn phồng như đồ chơi, chất nhựa nhám mềm, ánh sáng dịu. Mọi thứ nảy vào, bẹp nhẹ rồi bật lại.",
+  "vstyle.voxel.desc":
+    "Thế giới 3D dựng từ khối vuông nhỏ, đảo khối lơ lửng như mô hình game. Vật thể được lắp từng khối rơi xuống.",
+  "vstyle.phan-bang-den.desc":
+    "Nét phấn bụi mờ trên bảng xanh đen, màu phấn nhạt, vệt xóa còn lại. Nét vẽ dần như thầy giảng bài.",
+  "vstyle.so-tay-but-bi.desc":
+    "Vẽ bút bi xanh trên giấy kẻ ô, mũi tên, khung và chữ viết tay, điểm bút dạ quang. Lật trang sổ để chuyển cảnh.",
+  "vstyle.son-dau.desc":
+    "Sơn dầu đắp dày, nét cọ có hướng, chấm màu rời, ánh sáng lung linh. Nét cọ quét ngang phủ kín để chuyển cảnh.",
+  "vstyle.phac-chi-than.desc":
+    "Chì và than trên giấy màu, nét phác tay, đan nét và vệt di, điểm sáng phấn trắng. Thấy được quá trình vẽ từ nét dựng.",
+  "vstyle.film-noir.desc":
+    "Ảnh đen trắng tương phản gắt, bóng rèm, phố ướt, khói và sương. Đèn quét chậm, chuyển cảnh bằng vòng iris.",
+  "vstyle.dien-anh-35mm.desc":
+    "Khung hình rộng anamorphic, tông teal-cam, hạt phim và quầng sáng, xoá phông nông. Có dải đen letterbox, camera dolly chậm.",
+  "vstyle.scrapbook.desc":
+    "Ảnh polaroid, băng dính washi, ghi chú viết tay, vé và hoa ép trên giấy kraft. Ảnh thả xuống trang hơi xoay lệch.",
+  "vstyle.kinh-mau.desc":
+    "Mảnh kính màu trong suốt ngăn bởi viền chì đậm, ánh sáng xuyên qua tỏa màu. Từng mảnh sáng lên lần lượt.",
+  "vstyle.art-deco.desc":
+    "Poster thập niên 20: hình học đối xứng, nét vàng trên nền đen, tia nắng xòe, chữ cao mảnh. Nét vàng chạy đối xứng từ tâm.",
+  "vstyle.memphis.desc":
+    "Màu rực tương phản, nét ngoằn ngoèo, zigzag, chấm confetti, khối hình học có bóng lệch. Hình khối bay vào, xoay và nảy.",
+  "vstyle.neo-brutalism.desc":
+    "Khối màu phẳng viền đen dày, bóng đổ cứng lệch, chữ cực to, bố cục thô có chủ ý. Khối nhún xuống như nút bấm khi nhấn.",
+  "vstyle.terminal-crt.desc":
+    "Chữ monospace phát quang xanh hoặc hổ phách trên nền đen, vạch quét, màn hình cong. Chữ gõ từng ký tự kèm con trỏ nháy.",
+  "vstyle.ban-do-co.desc":
+    "Bản đồ giấy da cũ, nét mực, la bàn, tàu buồm, đường hành trình chấm, nếp gấp sờn. Camera bay trên bản đồ theo câu chuyện.",
+  "vstyle.sach-tranh-thieu-nhi.desc":
+    "Chì màu và sáp màu, nhân vật tròn trịa hiền lành, tông ấm. Mỗi cảnh là một trang sách, chuyển bằng lật trang.",
+  "vstyle.bong-cat.desc":
+    "Hình bóng đen cắt tinh xảo trước nền trời sáng ấm, nhiều lớp theo độ sâu. Nhân vật cử động bằng xoay khớp như rối bóng.",
+  "vstyle.duotone.desc":
+    "Ảnh thật chuyển sang đúng hai màu đậm, chủ thể cắt nền trên khối màu đặc. Đổi cặp màu tức thì khi nhấn.",
+  "vstyle.khac-dong.desc":
+    "Nét khắc đan và chấm mực đen kiểu bách khoa thư thế kỷ 19, giấy ngà cũ. Hình hiện bằng lớp nét đan dày dần.",
+  "vstyle.editorial-toi-gian.desc":
+    "Ảnh tĩnh vật và sản phẩm ánh sáng tự nhiên, tông be, đá, vải lanh, rất nhiều khoảng trắng. Chuyển động chậm, chữ serif lớn.",
 
   // ===== Text to video: giai đoạn AI dựng + liên kết project =====
   "ttv.status.editing": "AI đang dựng video",

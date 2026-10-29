@@ -2253,7 +2253,7 @@ export const en: Record<string, string> = {
   "vstyle.detail.delete-builtin":
     "This is a built-in style - even after deleting it you can bring it back with the \"Restore original\" button on the style with the same id.",
 
-  // -- The 20 style names --
+  // -- The 50 style names --
   "vstyle.giay-gap-nhat.name": "Japanese paper craft",
   "vstyle.vox-explainer.name": "VOX-style explainer",
   "vstyle.tranh-ve-tay.name": "Hand-painted (watercolour)",
@@ -2275,7 +2275,7 @@ export const en: Record<string, string> = {
   "vstyle.cat-out-puppet.name": "Cut-out paper puppets",
   "vstyle.giao-dien-app.name": "App interface",
 
-  // -- The 20 style descriptions --
+  // -- The 50 style descriptions --
   "vstyle.giay-gap-nhat.desc":
     "Folded and cut paper in layers, washi fibre texture, soft shadows between layers. Scenes change by folding and flipping.",
   "vstyle.vox-explainer.desc":
@@ -2316,6 +2316,99 @@ export const en: Record<string, string> = {
     "Paper puppets jointed at the limbs, construction-paper texture, slightly rough cut edges. Characters move by rotating at the joints.",
   "vstyle.giao-dien-app.desc":
     "Frosted glass interface panels floating in space, layered shadows, crisp icons. A simulated cursor performs real actions.",
+
+  // -- The 30 styles added later: names + descriptions --
+  "vstyle.vector-phat-sang.name": "Glowing science vector",
+  "vstyle.son-mai.name": "Vietnamese lacquer painting",
+  "vstyle.tranh-lua.name": "Vietnamese silk painting",
+  "vstyle.gom-men-lam.name": "Blue-and-white porcelain",
+  "vstyle.ukiyo-e.name": "Ukiyo-e woodblock",
+  "vstyle.chu-dong.name": "Kinetic typography",
+  "vstyle.truyen-tranh-my.name": "American comic book",
+  "vstyle.pop-art.name": "Pop art",
+  "vstyle.manga-den-trang.name": "Black-and-white manga",
+  "vstyle.y2k-chrome.name": "Y2K chrome",
+  "vstyle.3d-do-choi.name": "Cute 3D toy (claymorphism)",
+  "vstyle.voxel.name": "Voxel blocks",
+  "vstyle.phan-bang-den.name": "Chalkboard",
+  "vstyle.so-tay-but-bi.name": "Ballpoint notebook doodles",
+  "vstyle.son-dau.name": "Impressionist oil painting",
+  "vstyle.phac-chi-than.name": "Graphite and charcoal sketch",
+  "vstyle.film-noir.name": "Film noir",
+  "vstyle.dien-anh-35mm.name": "Cinematic 35mm film",
+  "vstyle.scrapbook.name": "Scrapbook",
+  "vstyle.kinh-mau.name": "Stained glass",
+  "vstyle.art-deco.name": "Art Deco",
+  "vstyle.memphis.name": "1980s Memphis",
+  "vstyle.neo-brutalism.name": "Neo-brutalism",
+  "vstyle.terminal-crt.name": "CRT terminal",
+  "vstyle.ban-do-co.name": "Antique map",
+  "vstyle.sach-tranh-thieu-nhi.name": "Children's picture book",
+  "vstyle.bong-cat.name": "Silhouette shadow art",
+  "vstyle.duotone.name": "Duotone photography",
+  "vstyle.khac-dong.name": "Copperplate engraving",
+  "vstyle.editorial-toi-gian.name": "Minimal luxury editorial",
+
+  "vstyle.vector-phat-sang.desc":
+    "Rounded vector shapes with soft gradients and glow on dark, speckled backgrounds. Layered parallax, zooming through objects between scenes.",
+  "vstyle.son-mai.desc":
+    "Vietnamese son mai lacquer: deep gloss, gold and silver leaf, crushed eggshell inlay, vermilion and black. Images appear as if sanded into view.",
+  "vstyle.tranh-lua.desc":
+    "Thin translucent washes on visible silk, muted earthy tones, fine ink contours. Images soak in, camera drifts like an unrolling scroll.",
+  "vstyle.gom-men-lam.desc":
+    "Cobalt blue brushwork on glossy white glaze with traditional cloud and wave borders. Blue strokes run like a brush on ceramic.",
+  "vstyle.ukiyo-e.desc":
+    "Japanese woodblock print: bold flowing outlines, flat traditional pigments, stylised waves and clouds, woodgrain and washi. Colour layers print one after another.",
+  "vstyle.chu-dong.desc":
+    "Type is the star; backgrounds are minimal colour fields. Every word lands on the beat of speech, scaling, rotating and resizing for emphasis.",
+  "vstyle.truyen-tranh-my.desc":
+    "Bold inks, flat colour with Ben-Day dots, dynamic poses. Each idea is a panel; sound-effect words burst out with a shake.",
+  "vstyle.pop-art.desc":
+    "1960s screen print: bold flat colour, oversized halftone dots, thick outlines, repeated image grids. Palettes swap instantly on the beat.",
+  "vstyle.manga-den-trang.desc":
+    "Crisp pen ink, screentone shading, speed and focus lines, angled panels. The camera follows the reading order.",
+  "vstyle.y2k-chrome.desc":
+    "Liquid chrome and iridescent surfaces, bubbly glossy jelly shapes, early-2000s sparkle. Inflated type bounces elastically.",
+  "vstyle.3d-do-choi.desc":
+    "Soft, rounded toy-like 3D shapes in matte plastic under gentle light. Everything bounces in, squashes and springs back.",
+  "vstyle.voxel.desc":
+    "A 3D world built from small cubes, a floating block island like a game diorama. Objects assemble block by block.",
+  "vstyle.phan-bang-den.desc":
+    "Dusty chalk strokes on a green-black board, pastel chalk, leftover eraser smudges. Lines draw in like a teacher at the board.",
+  "vstyle.so-tay-but-bi.desc":
+    "Blue ballpoint sketches on lined or grid paper, arrows, boxes, hand lettering and highlighter. Notebook page flips between scenes.",
+  "vstyle.son-dau.desc":
+    "Thick impasto oil with directional strokes, broken colour and shimmering light. A sweeping brush stroke covers each scene change.",
+  "vstyle.phac-chi-than.desc":
+    "Graphite and charcoal on toned paper, gestural lines, hatching and smudges, white chalk highlights. The drawing builds up from construction lines.",
+  "vstyle.film-noir.desc":
+    "High-contrast black and white, venetian-blind shadows, wet streets, smoke and fog. Slow light sweeps and iris transitions.",
+  "vstyle.dien-anh-35mm.desc":
+    "Anamorphic widescreen, teal-and-orange grade, film grain and halation, shallow focus. Letterbox bars and slow dolly moves.",
+  "vstyle.scrapbook.desc":
+    "Polaroids, washi tape, handwritten notes, tickets and pressed flowers on kraft paper. Photos drop onto the page slightly askew.",
+  "vstyle.kinh-mau.desc":
+    "Jewel-toned glass panes separated by dark lead lines, light shining through. Panes light up one by one.",
+  "vstyle.art-deco.desc":
+    "1920s poster: geometric symmetry, gold linework on black, sunburst rays, tall slender type. Gold lines draw out symmetrically from the centre.",
+  "vstyle.memphis.desc":
+    "Clashing bright colours, squiggles, zigzags, confetti dots, geometric shapes with offset shadows. Shapes fly in, spin and bounce.",
+  "vstyle.neo-brutalism.desc":
+    "Flat colour blocks with thick black outlines, hard offset shadows, huge type, deliberately blunt layout. Blocks press down like buttons for emphasis.",
+  "vstyle.terminal-crt.desc":
+    "Green or amber phosphor monospace text on black, scanlines, curved glass. Text types out character by character with a blinking cursor.",
+  "vstyle.ban-do-co.desc":
+    "Aged parchment map with ink lines, compass rose, ships, dotted routes and worn folds. The camera flies across the map with the story.",
+  "vstyle.sach-tranh-thieu-nhi.desc":
+    "Coloured pencil and crayon, gentle rounded characters, warm palette. Each scene is a page, changed with a page turn.",
+  "vstyle.bong-cat.desc":
+    "Intricate black silhouettes against a warm backlit sky, layered by depth. Figures move by rotating at the joints like shadow puppets.",
+  "vstyle.duotone.desc":
+    "Real photos mapped to two bold colours, cut-out subjects on solid fields. The colour pair swaps instantly for emphasis.",
+  "vstyle.khac-dong.desc":
+    "Fine cross-hatched and stippled black ink like a 19th-century encyclopedia, aged off-white paper. Images build up hatch by hatch.",
+  "vstyle.editorial-toi-gian.desc":
+    "Still life and product shots in soft daylight, beige, stone and linen, lots of negative space. Very slow motion, large serif type.",
 
   // ===== Text to video: the AI build stage + project link =====
   "ttv.status.editing": "AI is building the video",

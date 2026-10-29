@@ -6,8 +6,18 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 # doctor.mjs tải cloudflared về .runtime/bin khi máy Mac không có brew (start/bin
-# là chỗ cũ) - chỉ tìm trên PATH là báo "chưa cài" ngay sau khi vừa cài xong
-export PATH="$ROOT/.runtime/bin:$ROOT/start/bin:$PATH"
+# là chỗ cũ) - chỉ tìm trên PATH là báo "chưa cài" ngay sau khi vừa cài xong.
+# AIEV_RUNTIME_DIR trong .env: thư mục runtime dùng chung (tương đối thì tính từ repo)
+RUNTIME_DIR="$ROOT/.runtime"
+if [ -f "$ROOT/.env" ]; then
+  RT="$(grep -E '^[[:space:]]*AIEV_RUNTIME_DIR=' "$ROOT/.env" | tail -1 | cut -d= -f2- | tr -d '"\r')"
+  case "$RT" in
+    "") ;;
+    /*) RUNTIME_DIR="$RT" ;;
+    *) RUNTIME_DIR="$ROOT/$RT" ;;
+  esac
+fi
+export PATH="$RUNTIME_DIR/bin:$ROOT/start/bin:$PATH"
 
 # 1. Kiểm tra đã cài cloudflared chưa
 if ! command -v cloudflared >/dev/null 2>&1; then

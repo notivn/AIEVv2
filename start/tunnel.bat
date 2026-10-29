@@ -2,8 +2,18 @@
 title Cloudflare Tunnel - AI Edit Video
 setlocal EnableExtensions
 cd /d "%~dp0.."
-rem cloudflared doctor tai rieng nam o .runtime\bin (start\bin la cho cu)
-set "PATH=%CD%\.runtime\bin;%CD%\start\bin;%PATH%"
+rem cloudflared doctor tai rieng nam o <runtime>\bin (start\bin la cho cu).
+rem Runtime mac dinh la .runtime, AIEV_RUNTIME_DIR trong .env doi sang thu muc dung chung
+set "RUNTIME_DIR=%CD%\.runtime"
+set "AIEV_RT="
+if exist ".env" (
+  for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
+    if /i "%%a"=="AIEV_RUNTIME_DIR" set "AIEV_RT=%%b"
+  )
+)
+if defined AIEV_RT set "AIEV_RT=%AIEV_RT:"=%"
+if defined AIEV_RT for %%i in ("%AIEV_RT%") do set "RUNTIME_DIR=%%~fi"
+set "PATH=%RUNTIME_DIR%\bin;%CD%\start\bin;%PATH%"
 
 rem 1. Kiem tra da cai cloudflared chua
 where cloudflared >nul 2>nul

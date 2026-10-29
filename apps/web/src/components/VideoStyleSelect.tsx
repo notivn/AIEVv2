@@ -3,7 +3,7 @@
 /**
  * Chọn PHONG CÁCH DỰNG cho video (giấy gấp, mực tàu, người que...).
  *
- * VÌ SAO KHÔNG DÙNG <select>: có 20 phong cách, mà cái tên tự nó không nói được
+ * VÌ SAO KHÔNG DÙNG <select>: có 50 phong cách, mà cái tên tự nó không nói được
  * video sẽ trông ra sao - "Đông Hồ" hay "cắt dán báo" chỉ có nghĩa với người đã
  * biết. Người dùng cần đọc được MÔ TẢ và CÁCH CHUYỂN ĐỘNG trước khi chọn, việc
  * đó một select không làm được.
@@ -36,7 +36,7 @@ import { useT } from "@/lib/i18n";
  * trong Kịch bản edit vẫn là tên cũ - hai nơi nói hai kiểu về cùng một thứ, và
  * người dùng tưởng thao tác sửa không ăn.
  *
- * Đánh đổi đã cân nhắc: giao diện tiếng Anh mất tên dịch của 20 phong cách dựng
+ * Đánh đổi đã cân nhắc: giao diện tiếng Anh mất tên dịch của 50 phong cách dựng
  * sẵn. Chấp nhận được, vì chúng vốn là khái niệm thuần Việt (giấy gấp Nhật, mực
  * tàu, tranh Đông Hồ) và tên do người dùng đặt mới là thứ phải đúng.
  */

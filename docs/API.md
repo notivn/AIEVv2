@@ -816,7 +816,7 @@ VideoStyleUsage   = { kind: "video-project"|"text-to-video"|"auto-cut"|"translat
 `videoStyleId` còn nằm trong meta nhưng không có hiệu lực, đếm vào là chặn xóa oan.
 
 Nguồn sự thật: `assets/video-styles/video-styles.json` = `{ styles: [], removedBuiltins: [] }`.
-20 phong cách mặc định nằm trong `BUILTIN_VIDEO_STYLES` (apps/server/src/videoStyles.ts) và được
+50 phong cách mặc định nằm trong `BUILTIN_VIDEO_STYLES` (apps/server/src/videoStyles.ts) và được
 GIEO vào file JSON ở lần đọc đầu tiên - repo mới clone vẫn có đủ. Bản cập nhật repo sau này thêm
 phong cách mặc định mới thì lần đọc kế tiếp tự chèn, trừ id đã nằm trong `removedBuiltins`.
 

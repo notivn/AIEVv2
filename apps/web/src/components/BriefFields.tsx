@@ -539,7 +539,7 @@ export function BriefFields({
           Đứng cạnh nhau thì người dùng đọc một lượt là phân biệt được.
 
           Là một CÔNG TẮC như mọi tính năng khác trong form: tắt (mặc định) thì
-          video dựng theo đúng cấu hình đã chọn, danh sách 20 phong cách không
+          video dựng theo đúng cấu hình đã chọn, danh sách 50 phong cách không
           chiếm chỗ; bật mới hiện ra để chọn. */}
       <Panel className="gap-4">
         <SwitchField

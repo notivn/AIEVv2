@@ -54,7 +54,7 @@ export function OptionCard({
   /**
    * Tiêu đề dạng chữ thuần cho tooltip. Tiêu đề bị `truncate` cắt cụt, mà thẻ
    * lựa chọn thường xếp lưới 2 cột trong cột hẹp - không có tooltip thì tên dài
-   * (20 phong cách dựng, giọng nhân bản người dùng tự đặt) cụt luôn, không còn
+   * (50 phong cách dựng, giọng nhân bản người dùng tự đặt) cụt luôn, không còn
    * đường nào đọc đủ. Truyền khi `title` không phải chuỗi thuần.
    */
   titleText?: string;

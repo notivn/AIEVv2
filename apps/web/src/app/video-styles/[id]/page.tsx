@@ -148,7 +148,7 @@ export default function VideoStyleDetailPage() {
   }
 
   // Ô chọn phong cách trong Brief ưu tiên BẢN DỊCH theo key `vstyle.<id>.name`
-  // (và `.desc`) rồi mới tới dữ liệu server. Với 20 phong cách mặc định thì key
+  // (và `.desc`) rồi mới tới dữ liệu server. Với 50 phong cách mặc định thì key
   // đó có sẵn, nên đổi tên ở đây prompt gửi AI đổi theo nhưng NHÃN trên ô chọn
   // thì không - phải nói ra, chứ để người dùng tự đoán là mất buổi.
   const nameKey = `vstyle.${id}.name`;

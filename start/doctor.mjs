@@ -361,6 +361,20 @@ function versionAtLeast(version, min) {
 }
 
 /**
+ * Python TỪ bản này trở lên là "quá mới": gói nặng chưa có wheel dựng sẵn nên
+ * pip phải tự build từ mã nguồn rồi hỏng. Gặp thật 10/2026 trên macOS: Homebrew
+ * `python3` lên 3.15, venv gateway build pydantic-core/tiktoken bằng Rust và chết
+ * vì PyO3 0.26 chỉ hỗ trợ tới 3.14; onnxruntime (VieNeu) cũng chỉ có wheel tới
+ * 3.14. Có wheel cho bản mới thì nâng số này.
+ */
+const PY_TOO_NEW = [3, 15];
+
+/** version nằm trong khoảng [min, PY_TOO_NEW) - dùng cho MỌI chỗ chọn/giữ Python của venv */
+function pyVersionOk(version, min) {
+  return versionAtLeast(version, min) && !versionAtLeast(version, PY_TOO_NEW);
+}
+
+/**
  * Python hệ thống có version >= min (để dựng venv gateway). Khác findPython():
  * `py` trên Windows mặc định là bản mới nhất nhưng máy có thể có cả 3.11 làm
  * mặc định - nên hỏi thẳng launcher theo từng version trước.
@@ -381,7 +395,8 @@ function findPythonAtLeast(min) {
     const r = run(exe, [...args, "-c", PY_VERSION_SNIPPET], 8000);
     if (!r.ok || !r.out) continue;
     const version = firstLine(r.out);
-    if (versionAtLeast(version, min)) {
+    // Bỏ qua cả bản quá mới: `python3` của Homebrew có thể đã là 3.15
+    if (pyVersionOk(version, min)) {
       return { exe, args, version, label: [exe, ...args].join(" ") };
     }
   }
@@ -403,7 +418,7 @@ function probeGatewayVenv() {
   const r = run(GW_VENV_PY, ["-c", PY_VERSION_SNIPPET], 8000, runtimeEnv());
   if (!r.ok || !r.out) return { ok: false, version: null, note: null };
   const version = firstLine(r.out);
-  if (!versionAtLeast(version, GW_MIN_PY)) return { ok: false, version, note: "python-too-old" };
+  if (!pyVersionOk(version, GW_MIN_PY)) return { ok: false, version, note: "python-too-old" };
   const mods = JSON.stringify(GW_MODULES);
   const check = run(
     GW_VENV_PY,
@@ -645,7 +660,7 @@ export function runDoctor() {
   // Venv dựng bằng Python dưới VENV_MIN_PY coi như CHƯA CÓ: gói cần dùng không
   // cài được vào đó, và ensureVenv sẽ xóa dựng lại ở lần cài kế tiếp
   const venvFound = findVenvPython();
-  const venvPy = venvFound && versionAtLeast(venvFound.version, VENV_MIN_PY) ? venvFound : null;
+  const venvPy = venvFound && pyVersionOk(venvFound.version, VENV_MIN_PY) ? venvFound : null;
   /** Python hệ thống chỉ cần để TẠO venv - dò một lần rồi nhớ, mỗi lần là một spawn */
   let sysPyMemo;
   const systemPy = () => (sysPyMemo === undefined ? (sysPyMemo = findPython()) : sysPyMemo);
@@ -687,7 +702,7 @@ export function runDoctor() {
         }
       : {
           auto: false,
-          manual: `pip install ${pkgs.join(" ")} (cài Python ${VENV_MIN_PY.join(".")}+ trước - ${PY_INSTALL_HINT})`,
+          manual: `pip install ${pkgs.join(" ")} (cài Python ${VENV_MIN_PY.join(".")}-3.14 trước - ${PY_INSTALL_HINT})`,
           url: "https://www.python.org/downloads/",
         };
 
@@ -779,19 +794,21 @@ export function runDoctor() {
     note: gw.ok ? null : gw.note ?? (gwPy ? "venv-missing" : "python-too-old"),
     fix: gw.ok
       ? null
-      : gw.version || gwPy
+      : // Venv dựng bằng Python ngoài khoảng (vd 3.15) chỉ cứu được khi máy có bản phù hợp
+        // để dựng lại - không thì nút "cài" chắc chắn hỏng, chỉ đường cài Python
+        (gw.version && pyVersionOk(gw.version, GW_MIN_PY)) || gwPy
         ? {
             auto: true,
             kind: "gateway-venv",
             size: "~80 MB",
             target: GW_VENV,
             confirm: true,
-            manual: gwManual(gw.version ? null : gwPy),
-            command: gwManual(gw.version ? null : gwPy),
+            manual: gwManual(gw.version && pyVersionOk(gw.version, GW_MIN_PY) ? null : gwPy),
+            command: gwManual(gw.version && pyVersionOk(gw.version, GW_MIN_PY) ? null : gwPy),
           }
         : {
             auto: false,
-            manual: "Python >= 3.13 (python.org)",
+            manual: `Python ${GW_MIN_PY.join(".")}-3.14 - ${PY_INSTALL_HINT}`,
             url: "https://www.python.org/downloads/",
           },
   });
@@ -1008,7 +1025,7 @@ async function installFfmpegWindowsLocal(log) {
 
 /** Lệnh gợi ý cài Python đủ mới, theo hệ điều hành */
 const PY_INSTALL_HINT = IS_MAC
-  ? "cài bằng Homebrew: brew install python (Python 3.9 có sẵn của macOS không dùng được)"
+  ? "cài bằng Homebrew: brew install python@3.13 (Python 3.9 có sẵn của macOS quá cũ, `brew install python` có thể ra bản quá mới)"
   : "tải tại python.org/downloads";
 
 /**
@@ -1020,10 +1037,10 @@ const PY_INSTALL_HINT = IS_MAC
 async function ensureVenv(log) {
   ensureRuntimeDirs();
   const cur = findVenvPython();
-  if (cur && versionAtLeast(cur.version, VENV_MIN_PY)) return true;
+  if (cur && pyVersionOk(cur.version, VENV_MIN_PY)) return true;
   const py = findPythonAtLeast(VENV_MIN_PY);
   if (!py) {
-    log(`Chưa có Python ${VENV_MIN_PY.join(".")}+ trên máy - ${PY_INSTALL_HINT}, rồi chạy lại.`);
+    log(`Chưa có Python ${VENV_MIN_PY.join(".")}-3.14 trên máy - ${PY_INSTALL_HINT}, rồi chạy lại.`);
     return false;
   }
   if (fs.existsSync(RUNTIME_DIRS.venv)) {
@@ -1060,14 +1077,20 @@ async function installGatewayVenv(log) {
     return false;
   }
   const cur = probeGatewayVenv();
-  if (cur.version && !versionAtLeast(cur.version, GW_MIN_PY)) {
-    log(`Venv gateway đang dùng Python ${cur.version} (< ${GW_MIN_PY.join(".")}) - xóa để dựng lại.`);
+  if (cur.version && !pyVersionOk(cur.version, GW_MIN_PY)) {
+    // Kiểm python TRƯỚC khi xóa: không có bản phù hợp thì xóa xong cũng không dựng lại được
+    const py = findPythonAtLeast(GW_MIN_PY);
+    if (!py) {
+      log(`Chưa có Python ${GW_MIN_PY.join(".")}-3.14 trên máy - ${PY_INSTALL_HINT}, rồi chạy lại.`);
+      return false;
+    }
+    log(`Venv gateway đang dùng Python ${cur.version} (cần ${GW_MIN_PY.join(".")}-3.14) - xóa để dựng lại.`);
     fs.rmSync(GW_VENV, { recursive: true, force: true });
   }
   if (!fs.existsSync(GW_VENV_PY)) {
     const py = findPythonAtLeast(GW_MIN_PY);
     if (!py) {
-      log(`Chưa có Python >= ${GW_MIN_PY.join(".")} trên máy - cài từ python.org rồi chạy lại.`);
+      log(`Chưa có Python ${GW_MIN_PY.join(".")}-3.14 trên máy - ${PY_INSTALL_HINT}, rồi chạy lại.`);
       return false;
     }
     log(`Tạo venv gateway bằng Python ${py.version}: ${GW_VENV}`);
@@ -1246,8 +1269,8 @@ const TEXT = {
       "models-elsewhere": "model đang nằm ngoài dự án - chuyển được, không phải tải lại",
       "models-empty": "chưa có model nào - tải khi dùng lần đầu",
       "cpu-only": "không có GPU tăng tốc - render bằng CPU",
-      "python-too-old": "cần Python 3.13 trở lên",
-      "venv-python-too-old": "Python trên máy quá cũ - cần 3.11 trở lên (macOS: brew install python)",
+      "python-too-old": "cần Python 3.13 hoặc 3.14 (macOS: brew install python@3.13)",
+      "venv-python-too-old": "chưa có Python phù hợp - cần 3.11 đến 3.14 (macOS: brew install python@3.13)",
     },
   },
   en: {
@@ -1294,8 +1317,8 @@ const TEXT = {
       "models-elsewhere": "models live outside the project - they can be moved, not re-downloaded",
       "models-empty": "no models yet - downloaded on first use",
       "cpu-only": "no hardware acceleration - rendering on CPU",
-      "python-too-old": "needs Python 3.13 or newer",
-      "venv-python-too-old": "Python on this machine is too old - needs 3.11 or newer (macOS: brew install python)",
+      "python-too-old": "needs Python 3.13 or 3.14 (macOS: brew install python@3.13)",
+      "venv-python-too-old": "no suitable Python - needs 3.11 to 3.14 (macOS: brew install python@3.13)",
     },
   },
 };

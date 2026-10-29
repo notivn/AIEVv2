@@ -1754,8 +1754,8 @@ export const en: Record<string, string> = {
   "doctor.note.system-only": "installed in the system Python (C: drive) - reinstall into .runtime/venv",
   "doctor.note.models-elsewhere": "models live outside the project - they can be moved, no re-download",
   "doctor.note.models-empty": "no models in the project yet",
-  "doctor.note.python-too-old": "needs Python 3.13 or newer",
-  "doctor.note.venv-python-too-old": "Python on this machine is too old - needs 3.11 or newer (macOS: brew install python)",
+  "doctor.note.python-too-old": "needs Python 3.13 or 3.14 (macOS: brew install python@3.13)",
+  "doctor.note.venv-python-too-old": "no suitable Python - needs 3.11 to 3.14 (macOS: brew install python@3.13)",
 
   "help.doctor.title": "What is the system check for?",
   "help.doctor.body":

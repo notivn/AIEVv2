@@ -154,6 +154,18 @@ export function isAllowedWebOrigin(origin: string): boolean {
 
 const serverDir = path.join(repoRoot, "apps", "server");
 
+/**
+ * Gốc thư mục runtime: mặc định `<repo>/.runtime`. `AIEV_RUNTIME_DIR` trong .env
+ * cho nhiều bản clone dùng CHUNG một chỗ (venv, model, binary, tài khoản gateway)
+ * - clone mới không phải cài lại gói Python và tải lại vài GB model. Đường dẫn
+ * tương đối tính từ gốc repo. Phải khớp runtimeRoot() trong start/doctor.mjs,
+ * nếu không doctor cài một nơi mà server tìm một nẻo.
+ */
+const RUNTIME_ROOT = (() => {
+  const dir = (process.env.AIEV_RUNTIME_DIR ?? "").trim();
+  return dir ? path.resolve(repoRoot, dir) : path.join(repoRoot, ".runtime");
+})();
+
 export const paths = {
   serverDir,
   dataDir: path.join(serverDir, "data"),
@@ -209,17 +221,17 @@ export const paths = {
    * Cả thư mục XÓA ĐƯỢC bất cứ lúc nào - hệ thống tự tạo lại.
    */
   runtime: {
-    root: path.join(repoRoot, ".runtime"),
+    root: RUNTIME_ROOT,
     /** TEMP/TMP/TMPDIR của mọi tiến trình con (bundle Remotion, profile Chrome...) */
-    tmp: path.join(repoRoot, ".runtime", "tmp"),
+    tmp: path.join(RUNTIME_ROOT, "tmp"),
     /** HF_HOME - model whisper tải từ HuggingFace */
-    models: path.join(repoRoot, ".runtime", "models"),
+    models: path.join(RUNTIME_ROOT, "models"),
     /** Virtualenv Python (faster-whisper, vieneu) */
-    venv: path.join(repoRoot, ".runtime", "venv"),
+    venv: path.join(RUNTIME_ROOT, "venv"),
     /** Binary tải riêng (ffmpeg, cloudflared) */
-    bin: path.join(repoRoot, ".runtime", "bin"),
+    bin: path.join(RUNTIME_ROOT, "bin"),
     /** PIP_CACHE_DIR */
-    pipCache: path.join(repoRoot, ".runtime", "pip-cache"),
+    pipCache: path.join(RUNTIME_ROOT, "pip-cache"),
   },
 } as const;
 

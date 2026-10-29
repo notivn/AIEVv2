@@ -216,6 +216,28 @@ node start/doctor.mjs --lang en    # English output (default follows the script)
 One file feeds the terminal, both start scripts and the web UI, so a new check is added in exactly
 one place.
 
+### Sharing installed tools between several clones
+
+Everything heavy the project installs or downloads (the Python venv with torch, VieNeu and
+faster-whisper; several GB of models; separately downloaded ffmpeg/cloudflared; image-gateway
+accounts) lives in `.runtime/` **of each repo folder**, so a fresh clone elsewhere installs and
+downloads it all again. To share one copy, add this to the `.env` of EACH clone:
+
+```bash
+AIEV_RUNTIME_DIR=D:\aiev-runtime        # absolute, or relative to the repo root
+```
+
+- **Simplest:** point straight at the `.runtime` of the install you already run, e.g.
+  `AIEV_RUNTIME_DIR=F:\vibe-coding\AIEV-v2\.runtime`. Nothing moves, so the venv stays intact and
+  works at once - just do not delete the old install.
+- **A neutral location:** move `.runtime/` there but **delete** its `venv` and `venv-gateway`
+  folders (a venv records absolute paths and breaks silently when moved). Run start once and the
+  environment check rebuilds the venvs in the new place (taking whatever is still in `pip-cache`).
+  The heaviest part, the models, stays put and is not downloaded again.
+
+Do not run two clones at the same time on one runtime. Cloned voices live in `assets/voices/` (not
+in git) - copy that folder across by hand.
+
 ## Upload from your phone
 
 On a project page, in the **Sources & Assets** card click **Connect phone** - scan the QR code with your phone camera (same WiFi as the machine running the system) to open the upload page `http://<machine-ip>:6868/m/<project>`. Videos/photos picked on the phone upload straight into the project's assets. The first time Windows asks about the firewall, choose **Allow** (the start script adds the rule automatically when it has admin rights).

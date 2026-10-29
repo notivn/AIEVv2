@@ -67,7 +67,17 @@ function nodePatched(version) {
  * Đây là danh sách đường dẫn DÙNG CHUNG với backend (apps/server) - đổi tên ở
  * đây là phải đổi cả bên đó, nếu không mỗi bên tìm model một nơi.
  */
-const RUNTIME = path.join(ROOT, ".runtime");
+// Khai báo TRƯỚC dòng RUNTIME bên dưới: envVar() đọc cache này, gọi khi `let`
+// chưa chạy tới là ReferenceError ngay lúc nạp module
+let envCache = null;
+/**
+ * AIEV_RUNTIME_DIR (.env): nhiều bản clone dùng CHUNG một thư mục runtime - venv,
+ * model, binary chỉ cài/tải một lần. Tương đối thì tính từ gốc repo. Phải khớp
+ * RUNTIME_ROOT trong apps/server/src/config.ts.
+ */
+const RUNTIME = envVar("AIEV_RUNTIME_DIR")
+  ? path.resolve(ROOT, envVar("AIEV_RUNTIME_DIR"))
+  : path.join(ROOT, ".runtime");
 export const RUNTIME_DIRS = {
   root: RUNTIME,
   tmp: path.join(RUNTIME, "tmp"),
@@ -211,7 +221,6 @@ function forgetDirStats() {
   dirStatsCache.clear();
 }
 
-let envCache = null;
 /** Đọc .env thủ công (dotenv chưa cài được ở lần chạy đầu) */
 function envFileVars() {
   if (envCache) return envCache;

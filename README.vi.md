@@ -215,6 +215,28 @@ node start/doctor.mjs --lang en    # in tiếng Anh
 Một file duy nhất phục vụ cả terminal, hai script khởi động lẫn web UI - thêm mục kiểm tra mới thì
 sửa đúng một chỗ.
 
+### Dùng chung đồ đã cài giữa nhiều bản clone
+
+Mọi thứ nặng dự án tự cài/tải về (venv Python với torch, VieNeu, faster-whisper; model vài GB;
+ffmpeg/cloudflared tải riêng; tài khoản gateway ảnh) nằm trong `.runtime/` **của từng thư mục repo** -
+nên clone repo sang chỗ khác là phải cài và tải lại từ đầu. Muốn các bản clone dùng chung, thêm vào
+`.env` của MỖI bản:
+
+```bash
+AIEV_RUNTIME_DIR=D:\aiev-runtime        # đường dẫn tuyệt đối, hoặc tương đối tính từ gốc repo
+```
+
+- **Đơn giản nhất:** trỏ thẳng vào `.runtime` của bản đang chạy, vd
+  `AIEV_RUNTIME_DIR=F:\vibe-coding\AIEV-v2\.runtime`. Không di chuyển gì nên venv còn nguyên, dùng
+  được ngay - chỉ nhớ đừng xóa bản cũ.
+- **Muốn một chỗ riêng:** chuyển `.runtime/` sang chỗ mới nhưng **xóa** hai thư mục `venv` và
+  `venv-gateway` trong đó (venv ghi cứng đường dẫn tuyệt đối, chuyển đi là hỏng ngầm). Chạy start
+  một lần, doctor dựng lại venv ngay tại chỗ mới (gói nào còn trong `pip-cache` thì lấy từ đó). Phần
+  nặng nhất là model thì giữ nguyên, không tải lại.
+
+Không chạy hai bản cùng lúc trên cùng một runtime. Giọng nhân bản nằm ở `assets/voices/` (không vào
+git) - chép tay sang bản mới.
+
 ## Upload từ điện thoại
 
 Trong trang project, ở card **Nguồn & Asset** bấm **Kết nối điện thoại** - quét mã QR bằng camera điện thoại (cùng WiFi với máy chạy hệ thống) để mở trang upload `http://<ip-máy>:6868/m/<project>`. Video/ảnh chọn trên điện thoại sẽ tải thẳng vào asset của project. Lần đầu Windows hỏi firewall thì chọn **Allow** (script start đã tự thêm rule nếu có quyền admin).

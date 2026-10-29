@@ -1222,6 +1222,18 @@ textarea.input {
   flex: none;
   color: var(--text-muted);
 }
+/* Tên món = nút mở xem trước; vẫn kéo được cả hàng lên timeline */
+.lib-item-main {
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+.lib-item-main:hover .text-sm {
+  color: var(--primary);
+}
+.lib-item-main:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 @media (min-width: 1100px) {
   .editor-root {
     height: calc(100dvh - 96px);

@@ -2982,6 +2982,7 @@ export const en: Record<string, string> = {
   "editor.library.kind-image": "Image",
   "editor.library.kind-audio": "Audio",
   "editor.library.play": "Preview",
+  "editor.library.open-preview": "Click to preview",
   "editor.library.stop": "Stop preview",
   "editor.library.add": "Add at playhead",
   "editor.library.add-music": "Use as background music",

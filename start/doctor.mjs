@@ -316,6 +316,13 @@ function findChrome() {
 }
 
 /**
+ * Python tối thiểu cho .runtime/venv: vieneu đòi >= 3.10, onnxruntime và torch
+ * bản hiện hành chỉ có wheel cho >= 3.11. Trên macOS `python3` mặc định thường
+ * là 3.9 của Command Line Tools - dựng venv bằng nó là mọi lệnh pip đều hỏng.
+ */
+const VENV_MIN_PY = [3, 11];
+
+/**
  * Python có sẵn module faster_whisper (phụ đề). Thứ tự dò khớp transcribe.ts:
  * Windows hay chỉ có `py` (launcher), macOS/Linux là `python3`.
  */
@@ -361,8 +368,15 @@ function versionAtLeast(version, min) {
  */
 function findPythonAtLeast(min) {
   const cands = IS_WIN
-    ? [["py", ["-3.14"]], ["py", ["-3.13"]], ["py", []], ["python", []], ["python3", []]]
-    : [["python3.14", []], ["python3.13", []], ["python3", []], ["python", []]];
+    ? [["py", ["-3.14"]], ["py", ["-3.13"]], ["py", ["-3.12"]], ["py", ["-3.11"]], ["py", []], ["python", []], ["python3", []]]
+    : [
+        ["python3.14", []],
+        ["python3.13", []],
+        ["python3.12", []],
+        ["python3.11", []],
+        ["python3", []],
+        ["python", []],
+      ];
   for (const [exe, args] of cands) {
     const r = run(exe, [...args, "-c", PY_VERSION_SNIPPET], 8000);
     if (!r.ok || !r.out) continue;
@@ -628,14 +642,20 @@ export function runDoctor() {
   // Gói cài vào .runtime/venv, KHÔNG cài toàn cục. Nên phép dò cũng phải hỏi
   // trình thông dịch của venv: hỏi Python hệ thống thì thấy gói cũ nằm ở ổ C:
   // và báo "ok" trong khi venv rỗng, lúc chạy thật là hỏng.
-  const venvPy = findVenvPython();
+  // Venv dựng bằng Python dưới VENV_MIN_PY coi như CHƯA CÓ: gói cần dùng không
+  // cài được vào đó, và ensureVenv sẽ xóa dựng lại ở lần cài kế tiếp
+  const venvFound = findVenvPython();
+  const venvPy = venvFound && versionAtLeast(venvFound.version, VENV_MIN_PY) ? venvFound : null;
   /** Python hệ thống chỉ cần để TẠO venv - dò một lần rồi nhớ, mỗi lần là một spawn */
   let sysPyMemo;
   const systemPy = () => (sysPyMemo === undefined ? (sysPyMemo = findPython()) : sysPyMemo);
+  let newPyMemo;
+  const newEnoughPy = () =>
+    newPyMemo === undefined ? (newPyMemo = findPythonAtLeast(VENV_MIN_PY)) : newPyMemo;
   const py = venvPy ?? systemPy();
   const pyLabel = venvPy ? `Python ${venvPy.version} - .runtime/venv` : py ? `Python ${py.version}` : "";
-  /** Có thể tạo venv (đã có Python bất kỳ) hay chưa có Python nào cả */
-  const canVenv = Boolean(venvPy || systemPy());
+  /** Có thể tạo venv (có Python >= VENV_MIN_PY) hay chưa */
+  const canVenv = Boolean(venvPy || newEnoughPy());
 
   /**
    * Trả về trạng thái một gói: dò trong venv trước; venv chưa có gói thì mới
@@ -646,6 +666,8 @@ export function runDoctor() {
     if (venvPy && pyHasModule(venvPy.exe, mod, timeout)) return { ok: true, note: null };
     const sys = systemPy();
     if (!sys) return { ok: false, note: "python-missing" };
+    // Chỉ có Python cũ (vd 3.9 của macOS): nói thẳng bệnh, "thiếu venv" là chỉ sai chỗ
+    if (!canVenv) return { ok: false, note: "venv-python-too-old" };
     if (pyHasModule(sys.exe, mod, timeout)) return { ok: false, note: "system-only" };
     return { ok: false, note: venvPy ? "module-missing" : "venv-missing" };
   };
@@ -665,7 +687,7 @@ export function runDoctor() {
         }
       : {
           auto: false,
-          manual: `pip install ${pkgs.join(" ")} (cài Python 3.10+ trước)`,
+          manual: `pip install ${pkgs.join(" ")} (cài Python ${VENV_MIN_PY.join(".")}+ trước - ${PY_INSTALL_HINT})`,
           url: "https://www.python.org/downloads/",
         };
 
@@ -984,17 +1006,32 @@ async function installFfmpegWindowsLocal(log) {
   }
 }
 
-/** Tạo .runtime/venv nếu chưa có. Không có Python thì chịu - doctor không cài Python. */
+/** Lệnh gợi ý cài Python đủ mới, theo hệ điều hành */
+const PY_INSTALL_HINT = IS_MAC
+  ? "cài bằng Homebrew: brew install python (Python 3.9 có sẵn của macOS không dùng được)"
+  : "tải tại python.org/downloads";
+
+/**
+ * Tạo .runtime/venv nếu chưa có - hoặc DỰNG LẠI nếu venv cũ dựng bằng Python dưới
+ * VENV_MIN_PY (pip không nâng được chính trình thông dịch của venv, để nguyên là
+ * hỏng mãi kể cả khi máy đã có Python mới). Không có Python đủ mới thì chịu -
+ * doctor không cài Python.
+ */
 async function ensureVenv(log) {
   ensureRuntimeDirs();
-  if (fs.existsSync(VENV_PY)) return true;
-  const py = findPython();
+  const cur = findVenvPython();
+  if (cur && versionAtLeast(cur.version, VENV_MIN_PY)) return true;
+  const py = findPythonAtLeast(VENV_MIN_PY);
   if (!py) {
-    log("Chưa có Python trên máy - cài Python 3.10+ (python.org) rồi chạy lại.");
+    log(`Chưa có Python ${VENV_MIN_PY.join(".")}+ trên máy - ${PY_INSTALL_HINT}, rồi chạy lại.`);
     return false;
   }
-  log(`Tạo môi trường Python riêng của dự án: ${RUNTIME_DIRS.venv}`);
-  const ok = await spawnLogged(py.exe, ["-m", "venv", RUNTIME_DIRS.venv], log, runtimeEnv());
+  if (fs.existsSync(RUNTIME_DIRS.venv)) {
+    log(`Venv cũ dựng bằng Python ${cur?.version ?? "(hỏng)"} - quá cũ, xóa để dựng lại bằng ${py.label} ${py.version}.`);
+    fs.rmSync(RUNTIME_DIRS.venv, { recursive: true, force: true });
+  }
+  log(`Tạo môi trường Python riêng của dự án: ${RUNTIME_DIRS.venv} (${py.label} ${py.version})`);
+  const ok = await spawnLogged(py.exe, [...py.args, "-m", "venv", RUNTIME_DIRS.venv], log, runtimeEnv());
   if (!ok || !fs.existsSync(VENV_PY)) {
     log("Không tạo được venv (thiếu module venv? thử: python -m pip install virtualenv).");
     return false;
@@ -1210,6 +1247,7 @@ const TEXT = {
       "models-empty": "chưa có model nào - tải khi dùng lần đầu",
       "cpu-only": "không có GPU tăng tốc - render bằng CPU",
       "python-too-old": "cần Python 3.13 trở lên",
+      "venv-python-too-old": "Python trên máy quá cũ - cần 3.11 trở lên (macOS: brew install python)",
     },
   },
   en: {
@@ -1257,6 +1295,7 @@ const TEXT = {
       "models-empty": "no models yet - downloaded on first use",
       "cpu-only": "no hardware acceleration - rendering on CPU",
       "python-too-old": "needs Python 3.13 or newer",
+      "venv-python-too-old": "Python on this machine is too old - needs 3.11 or newer (macOS: brew install python)",
     },
   },
 };

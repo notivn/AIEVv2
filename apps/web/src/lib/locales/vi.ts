@@ -1752,6 +1752,7 @@ export const vi: Record<string, string> = {
   "doctor.note.models-elsewhere": "model đang nằm ngoài dự án - chuyển được, không phải tải lại",
   "doctor.note.models-empty": "chưa có model nào trong dự án",
   "doctor.note.python-too-old": "cần Python 3.13 trở lên",
+  "doctor.note.venv-python-too-old": "Python trên máy quá cũ - cần 3.11 trở lên (macOS: brew install python)",
 
   "help.doctor.title": "Kiểm tra hệ thống để làm gì?",
   "help.doctor.body":

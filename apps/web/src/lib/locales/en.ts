@@ -1755,6 +1755,7 @@ export const en: Record<string, string> = {
   "doctor.note.models-elsewhere": "models live outside the project - they can be moved, no re-download",
   "doctor.note.models-empty": "no models in the project yet",
   "doctor.note.python-too-old": "needs Python 3.13 or newer",
+  "doctor.note.venv-python-too-old": "Python on this machine is too old - needs 3.11 or newer (macOS: brew install python)",
 
   "help.doctor.title": "What is the system check for?",
   "help.doctor.body":

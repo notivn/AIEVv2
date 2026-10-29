@@ -2,7 +2,7 @@
 
 import { ExternalLink, FolderOpen, Loader2, Maximize2 } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
-import { mediaUrl, revealFile, type FileInfo } from "@/lib/api";
+import { encodeMediaPath, mediaUrl, revealFile, type FileInfo } from "@/lib/api";
 import { Button } from "@/components/Button";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Modal } from "@/components/Modal";
@@ -61,7 +61,7 @@ export function ZoomableThumb({
 }) {
   const { t } = useT();
   const url =
-    mediaUrl(file.relPath) +
+    mediaUrl(encodeMediaPath(file.relPath)) +
     (file.mtime ? `?v=${encodeURIComponent(file.mtime)}` : "");
   return (
     <button
@@ -165,8 +165,9 @@ export function MediaPreviewModal({
   }, [file?.relPath]);
 
   if (!file) return null;
-  // Cache-bust theo mtime - file render/draft ghi đè cùng tên
-  const url = mediaUrl(file.relPath) + `?v=${encodeURIComponent(file.mtime)}`;
+  // Cache-bust theo mtime - file render/draft ghi đè cùng tên. Mã hóa từng đoạn:
+  // tên file thư viện sound effect/nhạc có thể chứa `#`/`?` - trình duyệt cắt URL ở đó
+  const url = mediaUrl(encodeMediaPath(file.relPath)) + `?v=${encodeURIComponent(file.mtime)}`;
 
   return (
     <Modal

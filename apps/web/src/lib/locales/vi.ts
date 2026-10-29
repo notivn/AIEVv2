@@ -2976,6 +2976,7 @@ export const vi: Record<string, string> = {
   "editor.library.kind-image": "Ảnh",
   "editor.library.kind-audio": "Âm thanh",
   "editor.library.play": "Nghe thử",
+  "editor.library.open-preview": "Bấm để xem trước",
   "editor.library.stop": "Dừng nghe thử",
   "editor.library.add": "Thêm tại playhead",
   "editor.library.add-music": "Đặt làm nhạc nền",

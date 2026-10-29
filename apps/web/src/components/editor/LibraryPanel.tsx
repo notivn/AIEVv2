@@ -38,6 +38,7 @@ import { Button } from "@/components/Button";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { IconButton } from "@/components/IconButton";
+import { MediaPreviewModal } from "@/components/MediaPreviewModal";
 import { Segmented } from "@/components/Segmented";
 import { Skeleton } from "@/components/Skeleton";
 import { Toolbar } from "@/components/Toolbar";
@@ -85,6 +86,8 @@ interface Row {
   meta: string;
   /** URL nghe thử - chỉ món âm thanh */
   audioUrl: string | null;
+  /** File mở trong modal xem trước - mọi món đều xem được, kể cả khi chỉ đọc */
+  preview: FileInfo;
 }
 
 export function LibraryPanel({
@@ -227,6 +230,13 @@ export function LibraryPanel({
     el.play().catch(() => setPlaying((p) => (p === row.key ? null : p)));
   };
 
+  // ---- xem trước: bấm vào tên món nào cũng mở modal (ảnh/video/audio)
+  const [previewFile, setPreviewFile] = useState<FileInfo | null>(null);
+  const openPreview = (row: Row) => {
+    stop(); // modal tự phát - đừng để hai tiếng chồng nhau
+    setPreviewFile(row.preview);
+  };
+
   // Gấp cột / rời trang → dừng (phần tử <audio> unmount thì trình duyệt cũng dừng,
   // nhưng gấp cột không unmount nó)
   useEffect(() => {
@@ -283,6 +293,7 @@ export function LibraryPanel({
               .filter(Boolean)
               .join(" · "),
             audioUrl: kind === "audio" ? mediaUrl(encodeMediaPath(f.relPath)) : null,
+            preview: f,
           };
         });
     }
@@ -293,6 +304,7 @@ export function LibraryPanel({
       .filter((e) => tab !== "sfx" || !tag || e.tags.includes(tag))
       .map((e) => {
         const item: LibraryItem = { source: tab, file: e.file, name: e.file };
+        const rel = `assets/${tab === "sfx" ? "sound-effects" : "music"}/${e.file}`;
         return {
           item,
           key: libraryItemKey(item),
@@ -303,7 +315,8 @@ export function LibraryPanel({
             .join(" · "),
           // Tên file thư viện có thể chứa `#`/`?`/`%` - mã hóa từng đoạn, không thì
           // trình duyệt cắt URL ở `#` và nghe thử báo lỗi
-          audioUrl: mediaUrl(encodeMediaPath(`assets/${tab === "sfx" ? "sound-effects" : "music"}/${e.file}`)),
+          audioUrl: mediaUrl(encodeMediaPath(rel)),
+          preview: { name: e.description || e.file, relPath: rel, size: 0, mtime: "", kind: "audio" },
         };
       });
   }, [tab, assets, sfx, music, q, tag, durations, projectId, t]);
@@ -394,12 +407,17 @@ export function LibraryPanel({
               onDragStart={(e) => writeDragData(e.dataTransfer, row.item)}
             >
               <row.icon size={16} strokeWidth={1.75} className="lib-item-icon" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm" title={row.title}>
-                  {row.title}
-                </p>
+              {/* Bấm tên là xem - KHÔNG phụ thuộc readOnly: xem không sửa gì, lúc AI
+                  đang chạy hay editor bị khóa vẫn phải xem được trong thư viện có gì */}
+              <button
+                type="button"
+                className="lib-item-main min-w-0 flex-1 text-left"
+                title={t("editor.library.open-preview")}
+                onClick={() => openPreview(row)}
+              >
+                <p className="truncate text-sm">{row.title}</p>
                 {row.meta && <p className="truncate text-meta text-[var(--text-muted)]">{row.meta}</p>}
-              </div>
+              </button>
               {row.audioUrl && (
                 <IconButton
                   label={isPlaying ? t("editor.library.stop") : t("editor.library.play")}
@@ -446,6 +464,7 @@ export function LibraryPanel({
   return (
     <aside id="editor-library" className="editor-library" aria-label={t("editor.library.title")}>
       {audio}
+      <MediaPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
       <div className="flex shrink-0 items-center justify-between gap-2">
         <h2 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
           <Library size={16} strokeWidth={1.75} className="text-[var(--text-muted)]" aria-hidden="true" />

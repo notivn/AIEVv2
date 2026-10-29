@@ -45,6 +45,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+          # Ghi số major chưa đủ: runner có sẵn Node trong cache (vd 24.21.0, thấp
+          # hơn engines ^24.22.1) và setup-node dùng luôn bản đó. check-latest bắt
+          # nó hỏi bản mới nhất của major - đúng bản đã vá như comment ở matrix.
+          check-latest: true
 
       # npm ci (không phải npm install): cài đúng theo package-lock.json và
       # fail nếu lockfile lệch package.json - đúng thứ cần bắt ở PR

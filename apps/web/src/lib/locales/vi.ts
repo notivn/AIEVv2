@@ -1751,8 +1751,8 @@ export const vi: Record<string, string> = {
   "doctor.note.system-only": "đang nằm ở Python hệ thống (ổ C:) - cài lại vào .runtime/venv",
   "doctor.note.models-elsewhere": "model đang nằm ngoài dự án - chuyển được, không phải tải lại",
   "doctor.note.models-empty": "chưa có model nào trong dự án",
-  "doctor.note.python-too-old": "cần Python 3.13 trở lên",
-  "doctor.note.venv-python-too-old": "Python trên máy quá cũ - cần 3.11 trở lên (macOS: brew install python)",
+  "doctor.note.python-too-old": "cần Python 3.13 hoặc 3.14 (macOS: brew install python@3.13)",
+  "doctor.note.venv-python-too-old": "chưa có Python phù hợp - cần 3.11 đến 3.14 (macOS: brew install python@3.13)",
 
   "help.doctor.title": "Kiểm tra hệ thống để làm gì?",
   "help.doctor.body":

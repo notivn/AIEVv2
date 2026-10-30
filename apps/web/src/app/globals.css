@@ -975,6 +975,43 @@ textarea.input {
   display: none;
 }
 
+/* Bảng Hướng dẫn (GuidePanel.tsx): nổi đè mép phải, ngay dưới topbar 56px để
+   nút "Hướng dẫn" và nút đổi ngôn ngữ vẫn bấm được trong lúc đọc. Không phủ nền
+   - người dùng đọc để làm theo ngay trên trang. z-index 45: trên drawer panel AI
+   (40), dưới Modal (50) để hộp thoại mở từ trang vẫn nổi lên trên. */
+.guide-panel {
+  position: fixed;
+  top: 56px;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 100%);
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  outline: none;
+}
+.guide-menu-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition);
+}
+.guide-menu-btn:hover {
+  border-color: var(--text-muted);
+}
+
 @media (max-width: 1279.98px) {
   /* Panel rời khỏi dòng chảy → không chừa chỗ nữa, trượt vào từ mép phải */
   .shell-panel {

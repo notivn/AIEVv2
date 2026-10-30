@@ -266,7 +266,7 @@ export const vi: Record<string, string> = {
   "chart.total-per-day": "Tổng/ngày",
 
   // ===== Render Queue =====
-  "queue.subtitle": "Hàng đợi tuần tự - một job chạy tại một thời điểm",
+  "queue.subtitle": "Hàng đợi render - số job chạy cùng lúc chỉnh trong Cấu hình, hai job của cùng một project không bao giờ chạy đồng thời",
   "queue.type.scene-draft": "Scene draft",
   "queue.type.scene-final": "Scene final",
   "queue.type.assemble-draft": "Lắp ráp draft",
@@ -720,7 +720,7 @@ export const vi: Record<string, string> = {
   "chat.session": "Phiên AI",
   "chat.auto-resume": "Tự chạy tiếp",
   "chat.auto-resume-aria": "Tự chạy tiếp khi gián đoạn",
-  "chat.auto-resume-title": "Phiên bị lỗi/gián đoạn sẽ tự chạy tiếp (tối đa 3 lần không tiến bộ; phiên edit: 12 - có tiến bộ thì đếm lại từ đầu)",
+  "chat.auto-resume-title": "Phiên bị lỗi/gián đoạn sẽ tự chạy tiếp (tối đa 3 lần không tiến bộ; phiên dựng video: theo Cấu hình - có tiến bộ thì đếm lại từ đầu)",
   "chat.history-error": "Không tải được lịch sử chat.",
   "chat.empty": "Nhắn cho Claude để bắt đầu, vd: \"Dựng video TikTok từ clip trong imports/\".",
   "chat.claude-working": "Claude đang làm việc…",
@@ -1112,7 +1112,7 @@ export const vi: Record<string, string> = {
   // ===== Gateway tạo ảnh - tài khoản web (trang Kết nối, luồng D) =====
   "conn.gateway.terms": "Dùng tài khoản web theo cách không chính thức có thể vi phạm điều khoản của nhà cung cấp và tài khoản có thể bị giới hạn - nên dùng tài khoản phụ. Token/cookie chỉ lưu trên máy này.",
   "conn.gateway.not-installed": "Chưa cài gateway tạo ảnh (môi trường Python riêng cho ChatGPT web + Gemini web).",
-  "conn.gateway.install-note": "Cài một lần cho cả hai card, mất vài phút. Cần Python 3.13 trở lên.",
+  "conn.gateway.install-note": "Cài một lần cho cả hai card, mất vài phút. Cần Python 3.13 hoặc 3.14.",
   "conn.gateway.install": "Cài gateway",
   "conn.gateway.installing": "Đang cài…",
   "conn.gateway.install-error": "Cài gateway tạo ảnh không thành công.",
@@ -1555,7 +1555,7 @@ export const vi: Record<string, string> = {
     "AI đọc transcript, chấm điểm rồi đề xuất những đoạn đáng cắt thành short. Bạn tick đoạn nào, hệ thống đẻ ra một project riêng cho đoạn đó.\nCần transcript nên video phải qua edit bằng AI trước. Lượt phân tích gọi AI, mất 1-3 phút và tốn token.\nProject gốc không bị đụng tới - short là project mới, không thích thì xóa riêng.",
   "help.repurpose.title": "Tái chế tỉ lệ khung",
   "help.repurpose.body":
-    "Tạo project mới cùng nội dung nhưng khác khung hình, ví dụ lấy bản dọc TikTok làm thêm bản ngang cho YouTube.\nHệ thống chỉ chép video nguồn và brief sang project con; vẫn phải edit lại cho bố cục hợp khung mới - tick \"AI tự edit\" để nó chạy luôn sau khi tạo.\nTỉ lệ trùng với project hiện tại sẽ bị khóa.",
+    "Tạo project mới cùng nội dung nhưng khác khung hình, ví dụ lấy bản dọc TikTok làm thêm bản ngang cho YouTube.\nHệ thống chỉ chép video nguồn và brief sang project con; vẫn phải edit lại cho bố cục hợp khung mới - tick \"Chạy AI edit luôn\" để nó chạy luôn sau khi tạo.\nTỉ lệ trùng với project hiện tại sẽ bị khóa.",
   "help.brief.title": "Kịch bản edit (Brief)",
   "help.brief.body":
     "Đây là bản yêu cầu AI đọc trước khi dựng: mô tả video nguồn, việc bạn muốn làm, bật tắt phụ đề, highlight, bố cục key, style và sound effect.\nViết càng rõ thì AI càng ít đoán sai - phần mô tả nguồn và yêu cầu edit là quan trọng nhất.\nBrief lưu trong project và dùng lại cho mọi phiên edit sau. Bấm bắt đầu edit thì bản đang gõ dở cũng được lưu tự động.",
@@ -1573,7 +1573,7 @@ export const vi: Record<string, string> = {
 
   // ===== ANCHOR:HELP_PAGES =====
   "help.phone-tunnel.title": "Bật Internet để làm gì?",
-  "help.phone-tunnel.body": "Mặc định mã QR chỉ dùng được khi điện thoại và máy tính CÙNG mạng WiFi. Bật nút này là mở một đường từ Internet vào máy qua Cloudflare, để điện thoại dùng 4G/5G hoặc ở nơi khác vẫn gửi video/ảnh thẳng vào project được.\nChưa cấu hình domain riêng thì hệ thống dùng Quick Tunnel: địa chỉ ngẫu nhiên dạng xxx.trycloudflare.com và ĐỔI mỗi lần bật lại. Muốn địa chỉ cố định thì khai domain ở tab Kết nối.\nVề an toàn: link tải lên mang một mã riêng và tự hết hiệu lực ngay khi bạn đóng cửa sổ QR này, nên người có link cũ không vào lại được. Nhưng đường tunnel thì VẪN CHẠY cho tới khi bạn bấm tắt - đóng cửa sổ QR không tắt nó.",
+  "help.phone-tunnel.body": "Mặc định mã QR chỉ dùng được khi điện thoại và máy tính CÙNG mạng WiFi. Bật nút này là mở một đường từ Internet vào máy qua Cloudflare, để điện thoại dùng 4G/5G hoặc ở nơi khác vẫn gửi video/ảnh thẳng vào project được.\nChưa cấu hình domain riêng thì hệ thống dùng Quick Tunnel: địa chỉ ngẫu nhiên dạng xxx.trycloudflare.com và ĐỔI mỗi lần bật lại. Muốn địa chỉ cố định thì khai domain ở tab Kết nối.\nVề an toàn: link tải lên mang một mã riêng và tự hết hiệu lực ngay khi bạn đóng cửa sổ QR này, nên người có link cũ không vào lại được. Tunnel bật từ chính cửa sổ này sẽ tự tắt khi bạn đóng cửa sổ; tunnel bật từ tab Kết nối hoặc bằng script thì VẪN CHẠY cho tới khi bạn tắt nó ở đó.",
   "help.autocut.title": "Auto cut videos là gì?",
   "help.autocut.body":
     "Đưa một video dài vào, hệ thống tự chia thành nhiều đoạn ngắn và tạo cho mỗi đoạn một Videos Project riêng để edit tiếp.\nDùng khi bạn có bản ghi livestream, podcast hay buổi nói chuyện dài và muốn cắt ra nhiều clip đăng mạng xã hội.\nPhiên cắt chỉ lo cắt và tạo project - phần dựng chữ, phụ đề, sound effect vẫn làm trong từng project sau đó.",
@@ -2005,7 +2005,7 @@ export const vi: Record<string, string> = {
   "ttv.voice.engine.why.NO_GEMINI_KEY":
     "Chưa có GEMINI_API_KEY trong file .env ở gốc repo. Lấy key tại aistudio.google.com/apikey rồi khởi động lại server.",
   "ttv.voice.engine.why.NO_PYTHON":
-    "Không tìm thấy Python trên máy. Cài Python 3.10+ rồi thử lại.",
+    "Không tìm thấy Python phù hợp trên máy. Cài Python 3.11 đến 3.14 rồi thử lại.",
   "ttv.voice.engine.why.NO_VIENEU":
     "Chưa cài gói giọng offline. Chạy `pip install vieneu` rồi bấm Kiểm tra lại.",
   "ttv.voice.engine.why.NO_TORCH":
@@ -2085,7 +2085,7 @@ export const vi: Record<string, string> = {
   "voices.recheck": "Kiểm tra lại",
   "voices.rechecking": "Đang kiểm tra…",
   "voices.install-title": "Cách bật giọng offline",
-  "voices.install-step1": "Cài Python 3.10 trở lên (nếu máy chưa có).",
+  "voices.install-step1": "Cài Python 3.11 đến 3.14 (nếu máy chưa có; macOS: brew install python@3.13).",
   "voices.install-step2": "Mở PowerShell rồi chạy lệnh này để cài engine đọc:",
   "voices.install-step3":
     "Muốn nhân bản giọng thì cài thêm PyTorch (nặng hơn, tải khoảng 2-3 GB):",
@@ -2405,6 +2405,20 @@ export const vi: Record<string, string> = {
     "Nét khắc đan và chấm mực đen kiểu bách khoa thư thế kỷ 19, giấy ngà cũ. Hình hiện bằng lớp nét đan dày dần.",
   "vstyle.editorial-toi-gian.desc":
     "Ảnh tĩnh vật và sản phẩm ánh sáng tự nhiên, tông be, đá, vải lanh, rất nhiều khoảng trắng. Chuyển động chậm, chữ serif lớn.",
+
+  // ===== Bảng Hướng dẫn (GuidePanel) =====
+  "guide.open": "Hướng dẫn",
+  "guide.open-hint": "Mở hướng dẫn sử dụng cho trang này",
+  "guide.title": "Hướng dẫn sử dụng",
+  "guide.menu": "Chọn mục",
+  "guide.this-page": "Về trang đang mở",
+  "guide.current-page": "Trang này",
+  "guide.prev": "Mục trước",
+  "guide.next": "Mục sau",
+  "guide.group.start": "Bắt đầu",
+  "guide.group.make": "Tạo nội dung",
+  "guide.group.library": "Thư viện & phong cách",
+  "guide.group.system": "Hệ thống",
 
   // ===== Text to video: giai đoạn AI dựng + liên kết project =====
   "ttv.status.editing": "AI đang dựng video",
@@ -2736,7 +2750,7 @@ export const vi: Record<string, string> = {
   "vstyle.detail.card-art": "Chỉ đạo mỹ thuật",
   "vstyle.detail.card-motion": "Dựng cảnh & chuyển động",
   "help.voices.title": "Trang Giọng đọc để làm gì?",
-  "help.voices.body": "Nhân bản giọng thật của bạn để Text to video đọc bằng chính giọng đó. Toàn bộ chạy trên máy bạn bằng VieNeu-TTS - không gửi tiếng nói đi đâu và không tốn tiền theo lượt.\nCần cài sẵn Python, gói vieneu và PyTorch; khối trên cùng nói rõ đang thiếu gì và cho chép luôn lệnh cài.\nMẫu tham chiếu chỉ cần 5-15 giây nói rõ ràng, không tạp âm - dài hơn KHÔNG tốt hơn vì model chỉ lấy phần đầu.",
+  "help.voices.body": "Nhân bản giọng thật của bạn để Text to video đọc bằng chính giọng đó. Toàn bộ chạy trên máy bạn bằng VieNeu-TTS - không gửi tiếng nói đi đâu và không tốn tiền theo lượt.\nCần cài sẵn Python, gói vieneu và PyTorch; khối trên cùng nói rõ đang thiếu gì và cho chép luôn lệnh cài.\nMẫu tham chiếu tốt nhất là 3-8 giây nói rõ ràng, không tạp âm - dài hơn KHÔNG tốt hơn vì model chỉ lấy phần đầu.",
   "common.no-match": "Không có mục nào khớp với tìm kiếm hoặc bộ lọc hiện tại.",
   "projects.search-placeholder": "Tìm project theo tên hoặc ID…",
   "imagesPage.search-placeholder": "Tìm dự án ảnh theo tên hoặc ID…",
@@ -3376,5 +3390,5 @@ export const vi: Record<string, string> = {
   "editor.review.undoing": "Đang hoàn tác…",
   "editor.review.history": "Xem lịch sử",
   "editor.review.export": "Xuất video",
-  "editor.review.export-hint": "Render bản final qua hàng chờ (chưa có bản nháp thì hệ thống dựng nháp trước)",
+  "editor.review.export-hint": "Render bản final qua hàng chờ (cần có bản nháp render thành công trước)",
 };

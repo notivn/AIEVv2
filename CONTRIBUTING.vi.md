@@ -2,7 +2,7 @@
 
 [🇬🇧 English](CONTRIBUTING.md) · 🇻🇳 Tiếng Việt
 
-Cảm ơn bạn đã bỏ thời gian. Đây là dự án nhỏ do [noti.vn](https://noti.vn) duy trì, nên quy tắc ở đây ngắn gọn và thực dụng.
+Cảm ơn bạn đã bỏ thời gian. Đây là dự án nhỏ do [noti.vn](https://noti.vn) duy trì, nên quy tắc ở đây ngắn gọn và thực dụng. Mọi người tham gia đều tuân theo [Quy tắc ứng xử](CODE_OF_CONDUCT.md).
 
 ## Trước khi bắt đầu
 

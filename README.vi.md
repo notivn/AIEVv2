@@ -178,7 +178,7 @@ Mọi thứ nặng dự án tự cài/tải về (venv Python với torch, VieNe
 AIEV_RUNTIME_DIR=D:\aiev-runtime        # đường dẫn tuyệt đối, hoặc tương đối tính từ gốc repo
 ```
 
-- **Đơn giản nhất:** trỏ thẳng vào `.runtime` của bản đang chạy, vd `AIEV_RUNTIME_DIR=F:\vibe-coding\AIEV-v2\.runtime`. Không di chuyển gì nên venv còn nguyên - chỉ nhớ đừng xóa bản cũ.
+- **Đơn giản nhất:** trỏ thẳng vào `.runtime` của bản đang chạy, vd `AIEV_RUNTIME_DIR=D:\AIEV\.runtime`. Không di chuyển gì nên venv còn nguyên - chỉ nhớ đừng xóa bản cũ.
 - **Muốn một chỗ riêng:** chuyển `.runtime/` sang chỗ mới nhưng **xóa** hai thư mục `venv` và `venv-gateway` trong đó (venv ghi cứng đường dẫn tuyệt đối, chuyển đi là hỏng ngầm). Chạy start một lần, doctor dựng lại venv ngay tại chỗ mới. Model giữ nguyên, không tải lại.
 
 Không chạy hai bản cùng lúc trên cùng một runtime. Giọng nhân bản nằm ở `assets/voices/` (không vào git) - chép tay sang bản mới.

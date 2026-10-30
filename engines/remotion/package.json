@@ -1,6 +1,6 @@
 {
   "name": "remotion-engine",
-  "version": "0.1.0",
+  "version": "2.0.1",
   "private": true,
   "description": "Tầng lắp ráp Remotion — composition Assemble data-driven từ meta.json (xem skill remotion-assemble)",
   "scripts": {

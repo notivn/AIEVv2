@@ -2,7 +2,7 @@
 
 🇬🇧 English · [🇻🇳 Tiếng Việt](CONTRIBUTING.vi.md)
 
-Thanks for taking the time. This is a small project maintained by [noti.vn](https://noti.vn), so the rules here are short and practical.
+Thanks for taking the time. This is a small project maintained by [noti.vn](https://noti.vn), so the rules here are short and practical. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Before you start
 

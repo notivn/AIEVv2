@@ -457,7 +457,7 @@ export const vi: Pick<GuideContent, Ids> = {
         ],
         steps: [
           "Thêm dòng AIEV_RUNTIME_DIR=<đường-dẫn> vào file .env của TỪNG bản cài (đường dẫn tuyệt đối, hoặc tương đối tính từ thư mục gốc).",
-          "Cách đơn giản nhất: trỏ thẳng vào .runtime của bản đang chạy, ví dụ AIEV_RUNTIME_DIR=F:\\vibe-coding\\AIEV-v2\\.runtime - không phải chuyển gì, chỉ đừng xóa bản cũ.",
+          "Cách đơn giản nhất: trỏ thẳng vào .runtime của bản đang chạy, ví dụ AIEV_RUNTIME_DIR=D:\\AIEV\\.runtime - không phải chuyển gì, chỉ đừng xóa bản cũ.",
           "Muốn chuyển .runtime sang chỗ trung lập: chuyển xong thì XÓA hai thư mục venv và venv-gateway trong đó, rồi chạy script khởi động một lần để dựng lại. Model không phải tải lại.",
         ],
         warning:
@@ -921,7 +921,7 @@ export const en: Pick<GuideContent, Ids> = {
         ],
         steps: [
           "Add AIEV_RUNTIME_DIR=<path> to the .env file of EACH copy (an absolute path, or relative to the root folder).",
-          "Simplest: point straight at the .runtime of the copy you already run, for example AIEV_RUNTIME_DIR=F:\\vibe-coding\\AIEV-v2\\.runtime - nothing moves, just don't delete the old copy.",
+          "Simplest: point straight at the .runtime of the copy you already run, for example AIEV_RUNTIME_DIR=D:\\AIEV\\.runtime - nothing moves, just don't delete the old copy.",
           "To move .runtime somewhere neutral instead: after moving it, DELETE the venv and venv-gateway folders inside, then run the start script once to rebuild them. The models are not downloaded again.",
         ],
         warning:

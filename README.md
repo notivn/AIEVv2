@@ -178,7 +178,7 @@ Everything heavy the project installs or downloads (the Python venv with torch, 
 AIEV_RUNTIME_DIR=D:\aiev-runtime        # absolute, or relative to the repo root
 ```
 
-- **Simplest:** point straight at the `.runtime` of the install you already run, e.g. `AIEV_RUNTIME_DIR=F:\vibe-coding\AIEV-v2\.runtime`. Nothing moves, so the venv keeps working - just do not delete the old install.
+- **Simplest:** point straight at the `.runtime` of the install you already run, e.g. `AIEV_RUNTIME_DIR=D:\AIEV\.runtime`. Nothing moves, so the venv keeps working - just do not delete the old install.
 - **A neutral location:** move `.runtime/` there but **delete** its `venv` and `venv-gateway` folders (a venv records absolute paths and breaks silently when moved). Run start once and the environment check rebuilds them in the new place. The models stay put and are not downloaded again.
 
 Do not run two clones at the same time on one runtime. Cloned voices live in `assets/voices/` (not in git) - copy that folder across by hand.

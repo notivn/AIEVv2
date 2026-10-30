@@ -266,7 +266,7 @@ export const en: Record<string, string> = {
   "chart.total-per-day": "Total/day",
 
   // ===== Render Queue =====
-  "queue.subtitle": "Sequential queue - one job runs at a time",
+  "queue.subtitle": "Render queue - how many jobs run at once is set in Settings; two jobs of the same project never run together",
   "queue.type.scene-draft": "Scene draft",
   "queue.type.scene-final": "Scene final",
   "queue.type.assemble-draft": "Assemble draft",
@@ -720,7 +720,7 @@ export const en: Record<string, string> = {
   "chat.session": "AI session",
   "chat.auto-resume": "Auto-resume",
   "chat.auto-resume-aria": "Auto-resume when interrupted",
-  "chat.auto-resume-title": "Failed/interrupted sessions resume automatically (up to 3 times without progress; edit sessions: 12 - progress resets the count)",
+  "chat.auto-resume-title": "Failed/interrupted sessions resume automatically (up to 3 times without progress; video build sessions: as set in Settings - progress resets the count)",
   "chat.history-error": "Could not load the chat history.",
   "chat.empty": "Message Claude to get started, e.g. \"Build a TikTok video from the clip in imports/\".",
   "chat.claude-working": "Claude is working…",
@@ -1112,7 +1112,7 @@ export const en: Record<string, string> = {
   // ===== Image gateways - web accounts (Connections page, stream D) =====
   "conn.gateway.terms": "Using web accounts this way is unofficial and may break the provider's terms; the account can be limited - use a secondary account. Tokens/cookies stay on this machine.",
   "conn.gateway.not-installed": "The image gateway is not installed (a separate Python environment for ChatGPT web + Gemini web).",
-  "conn.gateway.install-note": "One install covers both cards and takes a few minutes. Needs Python 3.13 or newer.",
+  "conn.gateway.install-note": "One install covers both cards and takes a few minutes. Needs Python 3.13 or 3.14.",
   "conn.gateway.install": "Install gateway",
   "conn.gateway.installing": "Installing…",
   "conn.gateway.install-error": "Installing the image gateway failed.",
@@ -1560,7 +1560,7 @@ export const en: Record<string, string> = {
     "The AI reads the transcript, scores it and proposes the segments worth turning into shorts. Tick the ones you want and the system spins up a separate project for each.\nIt needs a transcript, so the video must go through an AI edit first. Each analysis run calls the AI, takes 1-3 minutes and costs tokens.\nThe source project is untouched - each short is a new project you can delete on its own.",
   "help.repurpose.title": "Repurpose the aspect ratio",
   "help.repurpose.body":
-    "Creates a new project with the same content in a different frame, for example turning the vertical TikTok cut into a landscape version for YouTube.\nOnly the source video and the brief are copied over; the layout still has to be re-edited for the new frame - tick \"AI edits automatically\" to start that right away.\nThe ratio the project already uses is disabled.",
+    "Creates a new project with the same content in a different frame, for example turning the vertical TikTok cut into a landscape version for YouTube.\nOnly the source video and the brief are copied over; the layout still has to be re-edited for the new frame - tick \"Start AI edit right away\" to start that right away.\nThe ratio the project already uses is disabled.",
   "help.brief.title": "Edit brief",
   "help.brief.body":
     "This is the spec the AI reads before it builds anything: what the source footage is, what you want done, subtitles, highlights, key layout, style and sound effects on or off.\nThe clearer it is, the less the AI has to guess - the source description and the edit request matter most.\nThe brief is stored with the project and reused by every later session. Hitting start edit also saves whatever you were typing.",
@@ -1578,7 +1578,7 @@ export const en: Record<string, string> = {
 
   // ===== ANCHOR:HELP_PAGES =====
   "help.phone-tunnel.title": "What does going online do?",
-  "help.phone-tunnel.body": "By default the QR code only works while the phone and the computer are on the SAME WiFi. This button opens a path from the internet to this machine through Cloudflare, so a phone on 4G/5G or somewhere else entirely can still send video and images straight into the project.\nWith no domain configured the system uses a Quick Tunnel: a random xxx.trycloudflare.com address that CHANGES every time you start it. Set a domain on the Connections tab if you want a fixed address.\nOn safety: the upload link carries its own token and dies the moment you close this QR window, so an old link cannot get back in. The tunnel itself, however, KEEPS RUNNING until you stop it - closing the QR window does not stop it.",
+  "help.phone-tunnel.body": "By default the QR code only works while the phone and the computer are on the SAME WiFi. This button opens a path from the internet to this machine through Cloudflare, so a phone on 4G/5G or somewhere else entirely can still send video and images straight into the project.\nWith no domain configured the system uses a Quick Tunnel: a random xxx.trycloudflare.com address that CHANGES every time you start it. Set a domain on the Connections tab if you want a fixed address.\nOn safety: the upload link carries its own token and dies the moment you close this QR window, so an old link cannot get back in. A tunnel started from this window stops when you close it; one started from the Connections tab or a script KEEPS RUNNING until you stop it there.",
   "help.autocut.title": "What is Auto cut videos?",
   "help.autocut.body":
     "Feed in one long video and the system splits it into short segments, creating a separate Videos Project for each so you can keep editing.\nUse it when you have a livestream, podcast or long talk recording and want several clips for social.\nA session only cuts and creates projects - the text, captions and sound effects are still built inside each project afterwards.",
@@ -2009,7 +2009,7 @@ export const en: Record<string, string> = {
   "ttv.voice.engine.why.NO_GEMINI_KEY":
     "No GEMINI_API_KEY in the .env file at the repo root. Get a key at aistudio.google.com/apikey, then restart the server.",
   "ttv.voice.engine.why.NO_PYTHON":
-    "Python was not found on this machine. Install Python 3.10+ and try again.",
+    "No suitable Python was found on this machine. Install Python 3.11 to 3.14 and try again.",
   "ttv.voice.engine.why.NO_VIENEU":
     "The offline voice package is not installed. Run `pip install vieneu`, then press Check again.",
   "ttv.voice.engine.why.NO_TORCH":
@@ -2089,7 +2089,7 @@ export const en: Record<string, string> = {
   "voices.recheck": "Check again",
   "voices.rechecking": "Checking…",
   "voices.install-title": "How to enable offline voices",
-  "voices.install-step1": "Install Python 3.10 or newer (if you don't have it).",
+  "voices.install-step1": "Install Python 3.11 to 3.14 (if you don't have it; macOS: brew install python@3.13).",
   "voices.install-step2": "Open PowerShell and run this to install the speech engine:",
   "voices.install-step3":
     "To clone voices as well, also install PyTorch (heavier, about 2-3 GB to download):",
@@ -2409,6 +2409,20 @@ export const en: Record<string, string> = {
     "Fine cross-hatched and stippled black ink like a 19th-century encyclopedia, aged off-white paper. Images build up hatch by hatch.",
   "vstyle.editorial-toi-gian.desc":
     "Still life and product shots in soft daylight, beige, stone and linen, lots of negative space. Very slow motion, large serif type.",
+
+  // ===== Guide panel (GuidePanel) =====
+  "guide.open": "Guide",
+  "guide.open-hint": "Open the user guide for this page",
+  "guide.title": "User guide",
+  "guide.menu": "Choose a section",
+  "guide.this-page": "Back to this page",
+  "guide.current-page": "This page",
+  "guide.prev": "Previous",
+  "guide.next": "Next",
+  "guide.group.start": "Getting started",
+  "guide.group.make": "Making content",
+  "guide.group.library": "Libraries & styles",
+  "guide.group.system": "System",
 
   // ===== Text to video: the AI build stage + project link =====
   "ttv.status.editing": "AI is building the video",
@@ -2743,7 +2757,7 @@ export const en: Record<string, string> = {
   "vstyle.detail.card-art": "Art direction",
   "vstyle.detail.card-motion": "Staging & motion",
   "help.voices.title": "What is the Voices page for?",
-  "help.voices.body": "Clone your own voice so Text to video can narrate with it. Everything runs on your machine through VieNeu-TTS - no audio leaves the computer and there is no per-use cost.\nIt needs Python, the vieneu package and PyTorch; the block at the top says exactly what is missing and hands you the install command to copy.\nA reference clip of 5-15 seconds of clear speech is enough - longer is NOT better, the model only uses the beginning.",
+  "help.voices.body": "Clone your own voice so Text to video can narrate with it. Everything runs on your machine through VieNeu-TTS - no audio leaves the computer and there is no per-use cost.\nIt needs Python, the vieneu package and PyTorch; the block at the top says exactly what is missing and hands you the install command to copy.\nA reference clip of 3-8 seconds of clear speech works best - longer is NOT better, the model only uses the beginning.",
   "common.no-match": "Nothing matches the current search or filters.",
   "projects.search-placeholder": "Search projects by name or ID…",
   "imagesPage.search-placeholder": "Search image projects by name or ID…",
@@ -3383,5 +3397,5 @@ export const en: Record<string, string> = {
   "editor.review.undoing": "Undoing…",
   "editor.review.history": "View history",
   "editor.review.export": "Export video",
-  "editor.review.export-hint": "Render the final through the queue (a draft is built first if there isn't one)",
+  "editor.review.export-hint": "Render the final through the queue (needs a successful draft first)",
 };

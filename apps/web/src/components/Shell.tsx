@@ -27,6 +27,7 @@
 import {
   AudioLines,
   BookOpen,
+  CircleQuestionMark,
   Clapperboard,
   ExternalLink,
   FileText,
@@ -63,6 +64,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { getHealth, type Health } from "@/lib/api";
+import { Button } from "@/components/Button";
+import { GUIDE_PANEL_ID, GuidePanel } from "@/components/GuidePanel";
 import { HardwareMeter } from "@/components/HardwareMeter";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -288,6 +291,14 @@ export function Shell({ children }: { children: ReactNode }) {
   }, [pathname]);
   /** Chỉ để nhãn aria/tooltip nói đúng - bề rộng rail là việc của CSS */
   const [navCollapsed, setNavCollapsed] = useState(false);
+  /** Bảng Hướng dẫn - đang mở mà chuyển trang thì GIỮ mở, mục tự đổi theo trang */
+  const [guideOpen, setGuideOpen] = useState(false);
+  const guideBtnRef = useRef<HTMLButtonElement>(null);
+  const closeGuide = useCallback(() => {
+    setGuideOpen(false);
+    // Trả focus về nút đã mở - Esc xong người dùng bàn phím không bị rơi về đầu trang
+    guideBtnRef.current?.focus();
+  }, []);
 
   // Trạng thái THẤY ĐƯỢC của rail = thuộc tính data-nav mà SHELL_SCRIPT đã ghi,
   // cộng phép tự gấp theo bề rộng khi chưa có lựa chọn rõ ràng. Đọc thuộc tính
@@ -418,6 +429,21 @@ export function Shell({ children }: { children: ReactNode }) {
           </span>
 
           <div className="ml-auto flex items-center gap-3">
+            {/* Icon + chữ nằm ngang: một icon dấu hỏi trơ trọi giữa hàng nút
+                icon dễ bị bỏ qua. Màn hẹp thì chỉ còn icon (aria-label vẫn đủ). */}
+            <Button
+              ref={guideBtnRef}
+              variant="secondary"
+              small
+              onClick={() => (guideOpen ? closeGuide() : setGuideOpen(true))}
+              aria-expanded={guideOpen}
+              aria-controls={GUIDE_PANEL_ID}
+              aria-label={t("guide.open")}
+              title={t("guide.open-hint")}
+            >
+              <CircleQuestionMark size={14} strokeWidth={2} aria-hidden="true" />
+              <span className="hidden sm:inline">{t("guide.open")}</span>
+            </Button>
             {panelTitle !== null && (
               <button
                 type="button"
@@ -620,6 +646,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </aside>
         </div>
       </div>
+      <GuidePanel open={guideOpen} onClose={closeGuide} pathname={pathname} />
     </ShellPanelContext.Provider>
   );
 }

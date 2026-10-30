@@ -149,8 +149,8 @@ The logo swaps with the theme at the same moment as the tokens (same `data-theme
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ Topbar 56px: logo · page name · hardware · backend ·   │
-│ language · theme                                       │
+│ Topbar 56px: logo · page name · Guide · hardware ·     │
+│ backend · language · theme                             │
 ├─────────┬────────────────────────────────┬─────────────┤
 │ Rail    │  Content: FULL WIDTH, 20px     │ AI panel    │
 │ 220px ↔ │  gutter, cards 16px apart      │ 440px ↔ 40px│
@@ -165,6 +165,8 @@ Rail and panel widths are decided by **CSS custom properties driven by `data-nav
 
 Sidebar - **16 items**, source of truth is `NAV` in `apps/web/src/components/Shell.tsx` (do not re-list them here; this doc has drifted from that array before):
 Dashboard, Videos Project, Images Project, Auto cut, Text to video, Dịch video, Voices, Style Design, Phong cách dựng, Render Queue, Assets, Sound Effects, Prompts, Skills, Cấu hình, Kết nối.
+
+**The Guide panel** (`components/GuidePanel.tsx`, content in `lib/guide/`): the **Hướng dẫn / Guide** button in the topbar opens a right-side panel on the section for the current route (`guideIdFor(pathname)` in `lib/guide/index.ts`), with a menu to switch sections. It is deliberately NOT a modal and NOT the `ShellRightPanel` slot - people read it while doing the steps, and the slot belongs to the AI chat. Content is typed data per language (`lib/guide/content/*.ts`, `Record<GuideId, GuideSection>`), not locale keys, so a missing section in either language is a tsc error. **When you add a page or change what a page does, update its guide section in both `vi` and `en`** (and map a new route in `guideIdFor`); `**bold**` labels must match the locale strings exactly.
 
 `/accelerate` and `/chat` are legacy `redirect()` stubs and correctly absent from NAV. `/m/[id]` is the phone-upload page and bypasses the shell entirely.
 

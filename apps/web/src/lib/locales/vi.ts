@@ -823,6 +823,12 @@ export const vi: Record<string, string> = {
   "imageForm.kind-label": "Loại ảnh",
   "imageForm.model-label": "Model tạo nền (Gemini)",
   "imageForm.model-hint": "Danh sách lấy trực tiếp từ Google · Lite rẻ/nhanh hơn · Pro chất lượng cao nhất",
+  "imageForm.chatgpt-model-label": "Model ChatGPT",
+  "imageForm.chatgpt-model-hint":
+    "GPT Image 2 ra kết quả ổn định. GPT Image 2.5 để ChatGPT tự chọn model ảnh mới nhất mà tài khoản có - mỗi tài khoản có thể ra khác nhau.",
+  "imageForm.chatgpt-model-default": "{name} (mặc định)",
+  "imageForm.chatgpt-model.gpt-image-2": "GPT Image 2",
+  "imageForm.chatgpt-model.gpt-image-2.5": "GPT Image 2.5 (ChatGPT tự chọn bản mới nhất)",
   "imageForm.format": "Định dạng",
   "imageForm.aspect-label": "Tỉ lệ",
   "imageForm.position-label": "Vị trí khối chữ",

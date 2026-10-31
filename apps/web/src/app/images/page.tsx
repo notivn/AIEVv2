@@ -617,6 +617,8 @@ export default function ImagesPage() {
         overlay: draft.overlay,
         styleId: draft.styleId,
         ...(draft.model ? { model: draft.model } : {}),
+        // Chỉ gửi khi chọn đích danh ChatGPT web - nếu không, server giữ lựa chọn lần trước
+        ...(draft.model === "chatgpt-web" ? { chatgptModel: draft.chatgptModel } : {}),
       });
       setCreateOpen(false);
       router.push(`/images/${p.id}`);

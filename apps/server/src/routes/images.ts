@@ -23,6 +23,7 @@ import {
   type ImageProject,
 } from "../imageMeta.js";
 import { IMAGE_MODELS } from "../gemini.js";
+import { CHATGPT_IMAGE_MODELS } from "../imageProviders/chatgptGateway.js";
 import { getPrefs, prefBool, prefString, rememberPrefs } from "../prefs.js";
 import { styleExists } from "../styles.js";
 import { queue } from "../queue.js";
@@ -72,6 +73,25 @@ function parseImageModel(raw: unknown, fallback: string | null): string | null {
     );
   }
   return raw;
+}
+
+/** chatgptModel: null/"" = mặc định của gateway; string phải nằm trong CHATGPT_IMAGE_MODELS */
+function parseChatgptModel(raw: unknown, fallback: string | null): string | null {
+  if (raw === undefined) return fallback;
+  if (raw === null || raw === "") return null;
+  if (typeof raw !== "string" || !(CHATGPT_IMAGE_MODELS as readonly string[]).includes(raw)) {
+    throw new HttpError(
+      400,
+      "INVALID_CHATGPT_MODEL",
+      `chatgptModel không hợp lệ - chọn một trong: ${CHATGPT_IMAGE_MODELS.join(", ")}`,
+    );
+  }
+  return raw;
+}
+
+/** Lựa chọn nhớ từ lần trước - bản cập nhật bỏ một model đi thì quên nó, đừng làm hỏng lúc tạo ảnh */
+function chatgptPref(value: string | undefined): string | null {
+  return value && (CHATGPT_IMAGE_MODELS as readonly string[]).includes(value) ? value : null;
 }
 
 /** styleId: null/"" = dùng style default; string phải là style tồn tại */
@@ -165,6 +185,7 @@ router.post("/", (req, res) => {
     aspect: parseAspect(body.aspect, (prefString(pref, "aspect") as ImageAspect) ?? "9:16"),
     status: "draft",
     model: parseImageModel(body.model, prefString(pref, "model") ?? null),
+    chatgptModel: parseChatgptModel(body.chatgptModel, chatgptPref(prefString(pref, "chatgptModel"))),
     styleId: parseStyleId(body.styleId, prefString(pref, "styleId") ?? null),
     overlay: normOverlay(body.overlay, normOverlay(prefOverlay, base)),
     background: null,
@@ -202,6 +223,7 @@ router.put("/:id", (req, res) => {
   meta.kind = parseKind(body.kind, meta.kind);
   meta.aspect = parseAspect(body.aspect, meta.aspect);
   if ("model" in body) meta.model = parseImageModel(body.model, meta.model);
+  if ("chatgptModel" in body) meta.chatgptModel = parseChatgptModel(body.chatgptModel, meta.chatgptModel);
   if ("styleId" in body) meta.styleId = parseStyleId(body.styleId, meta.styleId);
   if ("overlay" in body) {
     if (!body.overlay || typeof body.overlay !== "object" || Array.isArray(body.overlay)) {
@@ -218,6 +240,7 @@ router.put("/:id", (req, res) => {
     kind: "kind" in body ? meta.kind : undefined,
     aspect: "aspect" in body ? meta.aspect : undefined,
     model: "model" in body ? meta.model : undefined,
+    chatgptModel: "chatgptModel" in body ? (meta.chatgptModel ?? "") : undefined,
     styleId: "styleId" in body ? meta.styleId : undefined,
     showLogo: "overlay" in body ? meta.overlay.showLogo : undefined,
     position: "overlay" in body ? meta.overlay.position : undefined,

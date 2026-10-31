@@ -223,6 +223,8 @@ export interface GenerateImageInput {
   provider?: string | null;
   /** Model (tương thích ngược) - xem resolveProviders */
   model?: string | null;
+  /** Model ảnh khi lượt này chạy bằng ChatGPT web (CHATGPT_IMAGE_MODELS) - bỏ trống = mặc định */
+  chatgptModel?: string;
   usageProjectId?: string;
   allowText?: boolean;
   videoStyle?: VideoStyle | null;
@@ -337,6 +339,7 @@ async function generateWith(
       prompt: promptUsed,
       width: target.width,
       height: target.height,
+      model: input.chatgptModel,
       projectId: input.usageProjectId,
     });
     const raw = `${input.outFile}.chatgpt-raw`;

@@ -743,6 +743,11 @@ export interface ImageProject {
   overlay: ImageOverlay;
   /** Model Gemini tạo ảnh nền - null = model mặc định của server. */
   model: string | null;
+  /**
+   * Model ảnh ChatGPT web - chỉ có hiệu lực khi `model === "chatgpt-web"`.
+   * null = mặc định của gateway (gpt-image-2).
+   */
+  chatgptModel: string | null;
   /** Style Design ảnh phải tuân theo - null = style mặc định. */
   styleId: string | null;
   /** relPath ảnh nền (Gemini tạo hoặc upload tay) - phát qua /media. */
@@ -1830,6 +1835,8 @@ export const createImageProject = (input: {
   overlay?: Partial<ImageOverlay>;
   /** Model Gemini tạo nền - bỏ qua = server dùng mặc định. */
   model?: string | null;
+  /** Model ảnh ChatGPT web khi model = "chatgpt-web" - bỏ qua = lựa chọn lần trước. */
+  chatgptModel?: string | null;
   /** Style Design áp cho ảnh - bỏ qua/null = style mặc định. */
   styleId?: string | null;
 }) => post<ImageProject>("/api/images", input);
@@ -1842,7 +1849,14 @@ export const updateImageProject = (
   patch: Partial<
     Pick<
       ImageProject,
-      "name" | "prompt" | "kind" | "aspect" | "overlay" | "model" | "styleId"
+      | "name"
+      | "prompt"
+      | "kind"
+      | "aspect"
+      | "overlay"
+      | "model"
+      | "chatgptModel"
+      | "styleId"
     >
   >
 ) =>

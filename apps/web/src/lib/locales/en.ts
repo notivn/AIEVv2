@@ -823,6 +823,12 @@ export const en: Record<string, string> = {
   "imageForm.kind-label": "Image type",
   "imageForm.model-label": "Background model (Gemini)",
   "imageForm.model-hint": "List fetched directly from Google · Lite is cheaper/faster · Pro is highest quality",
+  "imageForm.chatgpt-model-label": "ChatGPT model",
+  "imageForm.chatgpt-model-hint":
+    "GPT Image 2 gives predictable results. GPT Image 2.5 lets ChatGPT pick the newest image model your account has - results can differ between accounts.",
+  "imageForm.chatgpt-model-default": "{name} (default)",
+  "imageForm.chatgpt-model.gpt-image-2": "GPT Image 2",
+  "imageForm.chatgpt-model.gpt-image-2.5": "GPT Image 2.5 (ChatGPT picks the newest)",
   "imageForm.format": "Format",
   "imageForm.aspect-label": "Aspect ratio",
   "imageForm.position-label": "Text position",

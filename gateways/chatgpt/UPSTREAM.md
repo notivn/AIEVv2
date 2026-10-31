@@ -8,9 +8,9 @@ backend AIEV tự bật/tắt (`apps/server/src/imageProviders/chatgptGateway.ts
 ## Thông tin bản vendor
 
 - Repo upstream: https://github.com/yukkcat/chatgpt2api
-- Commit: `9d3e6fc43187c6e2670d93c70d0a700f8b40c1a6` (VERSION `3.2.2`)
+- Commit: `d58db042411f512449dd90e3b7a73de79ab38c46` (VERSION `3.2.3`)
 - Giấy phép: **AGPL-3.0-only** (`LICENSE`), kèm phần MIT gốc của basketikun/chatgpt2api (`NOTICE`)
-- Ngày vendor vào AIEV: 2026-10-27
+- Ngày vendor vào AIEV: 2026-10-27 (3.2.2), cập nhật 2026-10-31 (3.2.3)
 
 ## Đã chép những gì
 
@@ -60,3 +60,7 @@ bằng câu chung tiếng Việt - không bao giờ để chữ Hán lọt ra UI
 4. Smoke test: bật sidecar, `GET /v1/models` có `gpt-image-2`, `POST /api/accounts {tokens:["fake"]}`
    phải trả `errors[0].code = "auth_invalid"` và tự gỡ tài khoản (AIEV dịch thành `GATEWAY_AUTH_FAILED`).
 5. Cập nhật mục "Thông tin bản vendor".
+
+Upstream đổi ít thì cách nhanh hơn bước 1-2: lấy diff giữa hai commit (`gh api -H "Accept: application/vnd.github.diff" repos/yukkcat/chatgpt2api/compare/<cũ>...<mới>`), chỉ giữ các file trong danh sách "Đã chép", rồi `git apply --directory=gateways/chatgpt`. Các bản vá AIEV còn nguyên vì không bị chép đè; đếm lại `AIEV PATCH` trước/sau và soi mọi hunk rơi vào `conversation.py`. Lần lên 3.2.3 làm theo cách này: 14 file, áp sạch.
+
+Model ảnh: 3.2.3 thêm `gpt-image-2.5`, `-flare`, `-sunburst`. Trong `_image_model_slug`, `gpt-image-2` ghim slug `gpt-5-3`, các bản 2.5 gửi `auto` (ChatGPT web tự chọn). AIEV giữ `gpt-image-2` làm mặc định - xem `CHATGPT_IMAGE_MODELS` trong `apps/server/src/imageProviders/chatgptGateway.ts`.

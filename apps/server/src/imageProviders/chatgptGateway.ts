@@ -37,7 +37,14 @@ const IMAGE_TIMEOUT_MS = 10 * 60 * 1000;
 /** Tự khởi động lại tối đa chừng này lần liên tiếp - quá thì chờ lần gọi kế tiếp */
 const MAX_AUTO_RESTARTS = 3;
 
-export const CHATGPT_IMAGE_MODELS = ["gpt-image-2"] as const;
+/**
+ * Phần tử ĐẦU là mặc định (generateChatgptImage dùng khi không truyền model).
+ * Gateway ánh xạ (openai_backend_api.py `_image_model_slug`): "gpt-image-2" ghim
+ * cứng slug "gpt-5-3", còn "gpt-image-2.5" gửi "auto" = ChatGPT web tự chọn model
+ * ảnh mới nhất của tài khoản - nên giữ "gpt-image-2" làm mặc định cho kết quả ổn
+ * định, 2.5 chỉ dùng khi chọn đích danh.
+ */
+export const CHATGPT_IMAGE_MODELS = ["gpt-image-2", "gpt-image-2.5"] as const;
 
 // ---------------------------------------------------------------------------
 // Khóa + đường dẫn

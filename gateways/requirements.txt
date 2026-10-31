@@ -2,7 +2,7 @@
 # Cai bang: node start/doctor.mjs --fix-one image-gateway  (hoac nut "Cai tu dong" o trang Cau hinh)
 # KHONG tron voi .runtime/venv (torch, vieneu, faster-whisper).
 #
-# --- gateways/chatgpt (chatgpt2api 3.2.2) - lay tu pyproject.toml cua upstream ---
+# --- gateways/chatgpt (chatgpt2api 3.2.3) - lay tu pyproject.toml cua upstream ---
 # Bo psycopg2-binary: AIEV chi chay SQLite (DATABASE_URL=sqlite:///...), khong can Postgres
 # va khong muon bat nguoi dung Windows bien dich psycopg2.
 # Can duoi + tran tren theo locks/uv.lock da va cua repo SEO-GEO (ban da chay that voi upstream

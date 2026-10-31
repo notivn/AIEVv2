@@ -72,6 +72,13 @@ export interface ImageProject {
   status: ImageStatus;
   /** Model Gemini tạo nền (IMAGE_MODELS trong gemini.ts) - null = mặc định Nano Banana 2 */
   model: string | null;
+  /**
+   * Model ảnh của ChatGPT web (CHATGPT_IMAGE_MODELS) - CHỈ có hiệu lực khi
+   * `model === "chatgpt-web"`. null = mặc định của gateway (gpt-image-2).
+   * Để "auto" mà vẫn áp giá trị đã lưu thì một lựa chọn bị ẩn trên form lại âm
+   * thầm quyết định ảnh ra - nên không áp.
+   */
+  chatgptModel: string | null;
   /** Style Design áp dụng khi generate (id trong assets/styles/styles.json) - null = style default */
   styleId: string | null;
   overlay: ImageOverlay;
@@ -155,6 +162,7 @@ function normImageMeta(id: string, raw: unknown, mtimeIso: string): ImageProject
     aspect: IMAGE_ASPECTS.includes(m.aspect as ImageAspect) ? (m.aspect as ImageAspect) : "9:16",
     status: normStatus(m.status),
     model: typeof m.model === "string" && m.model ? m.model : null,
+    chatgptModel: typeof m.chatgptModel === "string" && m.chatgptModel ? m.chatgptModel : null,
     styleId: typeof m.styleId === "string" && m.styleId ? m.styleId : null,
     overlay: normOverlay(m.overlay),
     background: plainFileName(m.background),

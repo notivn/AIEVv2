@@ -88,7 +88,10 @@ async function stepBackground(ctx: JobCtx, id: string): Promise<void> {
   // meta.model: id model Gemini API (giá trị cũ) hoặc "auto" | "chatgpt-web" |
   // "gemini-web" | "gemini-api" - imageProviders/resolveProviders lo tương thích
   ctx.progress(5, "AI tạo ảnh nền");
-  ctx.log(`[image] kind=${meta.kind} aspect=${meta.aspect} model=${meta.model ?? "(mặc định)"}`);
+  ctx.log(
+    `[image] kind=${meta.kind} aspect=${meta.aspect} model=${meta.model ?? "(mặc định)"}` +
+      (meta.model === "chatgpt-web" ? ` chatgptModel=${meta.chatgptModel ?? "(mặc định)"}` : ""),
+  );
   // Vẽ vào file TẠM của riêng job này rồi mới đổi tên: hủy job không cắt ngang
   // được lượt đang vẽ ở nhà cung cấp, và ảnh về muộn mà ghi thẳng background.png
   // là đè lên nền người dùng vừa tải lên / vừa tạo lại sau khi hủy.
@@ -102,6 +105,8 @@ async function stepBackground(ctx: JobCtx, id: string): Promise<void> {
     outFile: tmpAbs,
     usageProjectId: id,
     model: meta.model ?? undefined,
+    // Chỉ khi chọn đích danh ChatGPT web - xem ImageProject.chatgptModel
+    chatgptModel: meta.model === "chatgpt-web" ? (meta.chatgptModel ?? undefined) : undefined,
     onLog: (l) => ctx.log(l),
     isCanceled: () => ctx.isCanceled(),
   });

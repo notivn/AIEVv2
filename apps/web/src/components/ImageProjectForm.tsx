@@ -154,7 +154,72 @@ export function useImageModelChoices(
   const anyWebConfigured = providerOptions.some(
     (o) => o.value !== "auto" && o.configured
   );
-  return { providerOptions, missing, hint, anyWebConfigured };
+  /** Model ảnh gateway ChatGPT hỗ trợ - phần tử đầu là mặc định (server: CHATGPT_IMAGE_MODELS) */
+  const chatgptModels =
+    info?.providers.find((p) => p.id === "chatgpt-web")?.models ?? [];
+  return { providerOptions, missing, hint, anyWebConfigured, chatgptModels };
+}
+
+/**
+ * Chọn model ảnh của ChatGPT web - chỉ hiện khi ô nhà cung cấp đang là
+ * "chatgpt-web" (server cũng chỉ áp giá trị này trong đúng trường hợp đó).
+ *
+ * Option rỗng = mặc định của gateway (phần tử đầu của `models`), nên model đầu
+ * không lặp lại thành một option riêng - hai option cùng một nghĩa chỉ làm
+ * người dùng phân vân.
+ */
+export function ChatgptModelField({
+  id,
+  value,
+  models,
+  onChange,
+  disabled = false,
+  hint,
+}: {
+  id: string;
+  value: string | null;
+  models: string[];
+  onChange: (next: string | null) => void;
+  disabled?: boolean;
+  /** Ghi đè gợi ý dưới ô (vd "Đang lưu…") */
+  hint?: ReactNode;
+}) {
+  const { t, tf } = useT();
+  const label = (model: string) => {
+    const key = `imageForm.chatgpt-model.${model}`;
+    const v = t(key);
+    return v === key ? model : v;
+  };
+  const [defaultModel, ...others] = models;
+  // Giá trị đã lưu không còn trong danh sách (gateway cũ/mới) - hiện id thô, đừng âm thầm đổi
+  const missing = value !== null && value !== defaultModel && !others.includes(value);
+  return (
+    <Field
+      label={t("imageForm.chatgpt-model-label")}
+      htmlFor={id}
+      hint={hint ?? t("imageForm.chatgpt-model-hint")}
+    >
+      <select
+        id={id}
+        className="input"
+        value={value ?? ""}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value || null)}
+      >
+        <option value="">
+          {defaultModel
+            ? tf("imageForm.chatgpt-model-default", { name: label(defaultModel) })
+            : t("images.model-default")}
+        </option>
+        {missing && value && <option value={value}>{value}</option>}
+        {others.map((m) => (
+          <option key={m} value={m}>
+            {label(m)}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
 }
 
 /**
@@ -420,6 +485,8 @@ export interface ImageDraft {
   overlay: ImageOverlay;
   /** Model Gemini tạo nền - null = mặc định của server (Nano Banana 2). */
   model: string | null;
+  /** Model ảnh ChatGPT web khi model = "chatgpt-web" - null = mặc định của gateway. */
+  chatgptModel: string | null;
   /** Style Design ảnh phải tuân theo - null = style mặc định. */
   styleId: string | null;
 }
@@ -430,6 +497,7 @@ export const DEFAULT_IMAGE_DRAFT: ImageDraft = {
   aspect: "9:16",
   overlay: DEFAULT_OVERLAY,
   model: null,
+  chatgptModel: null,
   styleId: null,
 };
 
@@ -468,7 +536,7 @@ export function ImageProjectFields({
   sectioned?: boolean;
 }) {
   const { t, tf } = useT();
-  const { prompt, kind, aspect, overlay, model, styleId } = value;
+  const { prompt, kind, aspect, overlay, model, chatgptModel, styleId } = value;
   const { providers } = useProviders();
   const geminiModels =
     providers?.find((p) => p.id === "gemini")?.models ?? [];
@@ -565,6 +633,15 @@ export function ImageProjectFields({
             />
           </select>
         </Field>
+      )}
+      {showModel && model === "chatgpt-web" && modelChoices.chatgptModels.length > 1 && (
+        <ChatgptModelField
+          id={`${idPrefix}-chatgpt-model`}
+          value={chatgptModel}
+          models={modelChoices.chatgptModels}
+          disabled={disabled}
+          onChange={(next) => onChange({ chatgptModel: next })}
+        />
       )}
 
       {sectioned && <FormSectionHeading>{t("imageForm.format")}</FormSectionHeading>}

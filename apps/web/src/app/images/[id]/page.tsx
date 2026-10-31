@@ -73,6 +73,7 @@ import { Field } from "@/components/Field";
 import { IconButton } from "@/components/IconButton";
 import {
   AspectChip,
+  ChatgptModelField,
   ImageModelOptions,
   ImageProjectFields,
   ImageStatusBadge,
@@ -223,6 +224,7 @@ export default function ImageProjectDetailPage() {
             aspect: p.aspect,
             overlay: p.overlay,
             model: p.model,
+            chatgptModel: p.chatgptModel ?? null,
             styleId: p.styleId ?? null,
           }
       );
@@ -349,6 +351,7 @@ export default function ImageProjectDetailPage() {
         aspect: draft.aspect,
         overlay: draft.overlay,
         model: draft.model,
+        chatgptModel: draft.chatgptModel,
         styleId: draft.styleId,
       });
       setProj(p);
@@ -394,6 +397,7 @@ export default function ImageProjectDetailPage() {
       aspect: draft.aspect,
       overlay: draft.overlay,
       model: draft.model,
+      chatgptModel: draft.chatgptModel,
       styleId: draft.styleId,
     });
     setProj(p);
@@ -406,6 +410,20 @@ export default function ImageProjectDetailPage() {
     setGenError(null);
     try {
       setProj(await updateImageProject(imageId, { model: next }));
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setModelSaving(false);
+    }
+  }
+
+  /** Chọn model ChatGPT ở cột thiết lập → PUT ngay, như ô model ngay trên nó. */
+  async function onChatgptModelChange(next: string | null) {
+    setDraft((d) => (d ? { ...d, chatgptModel: next } : d));
+    setModelSaving(true);
+    setGenError(null);
+    try {
+      setProj(await updateImageProject(imageId, { chatgptModel: next }));
     } catch (e) {
       setGenError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -629,6 +647,16 @@ export default function ImageProjectDetailPage() {
                   />
                 </select>
               </Field>
+              {currentModel === "chatgpt-web" && modelChoices.chatgptModels.length > 1 && (
+                <ChatgptModelField
+                  id="image-quick-chatgpt-model"
+                  value={draft?.chatgptModel ?? proj?.chatgptModel ?? null}
+                  models={modelChoices.chatgptModels}
+                  disabled={modelSaving}
+                  hint={modelSaving ? t("common.saving") : undefined}
+                  onChange={onChatgptModelChange}
+                />
+              )}
 
               {/* Chạy từng bước riêng lẻ */}
               <div className="grid grid-cols-2 gap-2">

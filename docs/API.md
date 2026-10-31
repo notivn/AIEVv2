@@ -1284,14 +1284,19 @@ ImageProject = { id, name, prompt, kind: "background"|"3d"|"character"|"texture"
                  overlay: { title, subtitle, stats: [{label,value}], cta, showLogo: boolean,
                             position: "auto"|"top-left"|"top-center"|"top-right"|"middle-left"|
                                       "middle-center"|"middle-right"|"bottom-left"|"bottom-center"|"bottom-right" },
-                 model: string|null, styleId: string|null,
+                 model: string|null, chatgptModel: string|null, styleId: string|null,
                  background: string|null, final: string|null, error: string|null,
                  createdAt, updatedAt }
 
 GET    /api/images                → ImageProject[]
-POST   /api/images                { name, prompt, kind, aspect, overlay? } → 201 (id sinh từ name)
+POST   /api/images                { name, prompt, kind, aspect, overlay?, model?, chatgptModel?, styleId? }
+                                  → 201 (id sinh từ name)
+                                  `chatgptModel`: model ảnh ChatGPT web, một trong CHATGPT_IMAGE_MODELS
+                                  (`gpt-image-2` mặc định, `gpt-image-2.5`) hoặc null = mặc định; sai →
+                                  400 INVALID_CHATGPT_MODEL. CHỈ áp khi `model = "chatgpt-web"` - để "auto"
+                                  mà vẫn áp thì một lựa chọn đang ẩn trên form lại quyết định ảnh ra.
 GET    /api/images/:id            → ImageProject
-PUT    /api/images/:id            partial (name/prompt/kind/aspect/overlay) → ImageProject
+PUT    /api/images/:id            partial (name/prompt/kind/aspect/overlay/model/chatgptModel/styleId) → ImageProject
                                   `name` đổi TÊN HIỂN THỊ, KHÔNG đổi `id` (id là tên thư mục, bị
                                   tham chiếu ở đường dẫn ảnh và projectId của job). 400 INVALID_NAME
                                   khi rỗng hoặc quá 120 ký tự - cùng luật với video project.

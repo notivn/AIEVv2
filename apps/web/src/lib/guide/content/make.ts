@@ -39,6 +39,7 @@ export const vi: Pick<GuideContent, Ids> = {
           "**Tỉ lệ**: 9:16 **Dọc** (1080x1920), 16:9 **Ngang** (1920x1080), 1:1 **Vuông** (1080x1080) hoặc 4:5 **Feed** (1080x1350).",
           "Ô model: **Mặc định (nhà cung cấp chọn ở trang Kết nối)**, hoặc chọn hẳn một nhà cung cấp (**Tự động**, **Gemini API**, **ChatGPT (web)**, **Gemini (web)**), hoặc chọn đích danh một model Gemini. Danh sách model Gemini lấy trực tiếp từ Google: bản Lite rẻ và nhanh hơn, bản Pro chất lượng cao nhất.",
           "Nhà cung cấp nào chưa cấu hình sẽ bị khóa kèm chữ **chưa cấu hình** - thêm tài khoản hoặc API key ở trang **Kết nối**.",
+          "Chọn **ChatGPT (web)** thì hiện thêm ô **Model ChatGPT**: **GPT Image 2** (mặc định) cho kết quả ổn định, **GPT Image 2.5** để ChatGPT tự chọn model ảnh mới nhất mà tài khoản có. Ô này chỉ có tác dụng khi nhà cung cấp là ChatGPT (web).",
         ],
       },
       {
@@ -434,6 +435,7 @@ export const en: Pick<GuideContent, Ids> = {
           "**Image type**: **Background**, **3D illustration**, **Character**, **Liquid Glass texture**, **Product shot** or **Ad concept** - steers what kind of background the AI paints.",
           "**Aspect ratio**: 9:16 **Portrait** (1080x1920), 16:9 **Landscape** (1920x1080), 1:1 **Square** (1080x1080) or 4:5 **Feed** (1080x1350).",
           "Model: **Default (provider set on the Connections page)**, a specific provider (**Auto**, **Gemini API**, **ChatGPT (web)**, **Gemini (web)**), or a named Gemini model. The Gemini list comes straight from Google: Lite models are cheaper and faster, Pro gives the best quality.",
+          "Pick **ChatGPT (web)** and a **ChatGPT model** field appears: **GPT Image 2** (default) gives predictable results, **GPT Image 2.5** lets ChatGPT pick the newest image model your account has. It only applies when the provider is ChatGPT (web).",
           "Providers you haven't set up are locked and marked **not configured** - add the account or API key on the **Connections** page.",
         ],
       },

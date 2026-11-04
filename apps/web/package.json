@@ -10,13 +10,13 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
-    "@remotion/player": "4.0.538",
-    "lucide-react": "^1.59.0",
+    "@remotion/player": "4.0.539",
+    "lucide-react": "^1.66.0",
     "next": "^16.4.3",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "remotion": "4.0.538"
+    "remotion": "4.0.539"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.0",

@@ -1,0 +1,7 @@
+{
+  "$schema": "gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Quyền tối thiểu — webview điều hướng tới localhost:6868, không IPC nào cần thiết",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

@@ -60,6 +60,19 @@ Every page of the dashboard has a **Guide** button in the top bar: it opens a si
 
 Each project's `meta.json` is the single source of truth - the editor, the AI and the render queue all read and write it. Full API contract: [`docs/API.md`](docs/API.md). Production workflow + know-how: [`.claude/skills/`](.claude/skills/).
 
+## Desktop app (Windows)
+
+The repo ships a thin Tauri 2 shell in [`desktop/`](desktop/README.md): double-click and it bootstraps the environment, spawns the real stack (Express + Next.js), and opens the dashboard in a native window. Nothing about the web app changes - `start.bat` still works exactly as before. Closing the window minimizes to the tray so renders keep running; the tray menu has Restart / Open logs / Quit.
+
+Build it yourself (needs Rust + MSVC):
+
+```powershell
+npm install
+npm run desktop:build   # -> desktop/src-tauri/target/release/bundle/nsis/
+```
+
+Claude is the default agent engine. Any agent CLI you are signed into on this machine can also drive the system - Codex CLI (ChatGPT), Gemini CLI, OpenCode, or a custom command. See [docs/AGENT-ENGINES.md](docs/AGENT-ENGINES.md) and the "Agent điều khiển" card on the Connections page.
+
 ## Requirements
 
 - **Node.js 24 LTS** (or 22.23.4+ / 26.12.1+ - the October 2026 security releases; HyperFrames needs `>=22`)

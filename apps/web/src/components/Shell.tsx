@@ -32,6 +32,7 @@ import {
   ExternalLink,
   FileText,
   FolderOpen,
+  GraduationCap,
   Images,
   Languages,
   LayoutDashboard,
@@ -66,6 +67,7 @@ import { createPortal } from "react-dom";
 import { getHealth, type Health } from "@/lib/api";
 import { Button } from "@/components/Button";
 import { GUIDE_PANEL_ID, GuidePanel } from "@/components/GuidePanel";
+import { FeatureTour, TOUR_DONE_KEY } from "@/components/FeatureTour";
 import { HardwareMeter } from "@/components/HardwareMeter";
 import { LanguageToggle } from "@/components/LanguageToggle";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -300,6 +302,16 @@ export function Shell({ children }: { children: ReactNode }) {
     guideBtnRef.current?.focus();
   }, []);
 
+  /** FeatureTour - guide tour đi từng tab; mở tự động đúng LẦN ĐẦU tiên */
+  const [tourOpen, setTourOpen] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(TOUR_DONE_KEY) !== "1") setTourOpen(true);
+    } catch {
+      /* localStorage chặn thì chỉ mất auto-open - nút vẫn mở được tay */
+    }
+  }, []);
+
   // Trạng thái THẤY ĐƯỢC của rail = thuộc tính data-nav mà SHELL_SCRIPT đã ghi,
   // cộng phép tự gấp theo bề rộng khi chưa có lựa chọn rõ ràng. Đọc thuộc tính
   // chứ không đọc lại localStorage: một nguồn sự thật, không sợ hai bên lệch.
@@ -530,10 +542,20 @@ export function Shell({ children }: { children: ReactNode }) {
               })}
             </nav>
 
-            {/* Cuối sidebar: link mã nguồn nằm TRÊN badge phiên bản - hai thứ này
-                cùng nói về "bản dựng nào đang chạy" nên đứng cạnh nhau.
+            {/* Cuối sidebar: Hướng dẫn (tour) → mã nguồn → badge phiên bản.
                 `.shell-nav-foot` dán đáy (sticky) để rail dài vẫn với tới được. */}
             <div className="shell-nav-foot mt-auto flex flex-col gap-1">
+              <button
+                onClick={() => setTourOpen(true)}
+                title={t("tour.replay")}
+                aria-label={t("tour.replay")}
+                className="shell-nav-source inline-flex items-center gap-2 rounded-[var(--radius)] py-1 text-xs text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--surface)] hover:text-[var(--text)]"
+              >
+                <GraduationCap size={14} strokeWidth={2} />
+                <span className="shell-nav-label min-w-0 flex-1 truncate text-left">
+                  {t("tour.replay")}
+                </span>
+              </button>
               <a
                 href={REPO_URL}
                 target="_blank"
@@ -647,6 +669,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </div>
       <GuidePanel open={guideOpen} onClose={closeGuide} pathname={pathname} />
+      <FeatureTour open={tourOpen} onClose={() => setTourOpen(false)} />
     </ShellPanelContext.Provider>
   );
 }

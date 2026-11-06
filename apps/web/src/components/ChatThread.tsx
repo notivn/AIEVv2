@@ -19,6 +19,7 @@ import {
   sendChat,
   setChatAutoResume,
   type AgentEffort,
+  type AgentEngineId,
   type ChatSession,
   type ChatSessionStatus,
 } from "@/lib/api";
@@ -26,6 +27,7 @@ import { useAgentEvents } from "@/lib/useEvents";
 import {
   AiModelInlineRow,
   DEFAULT_EFFORT,
+  DEFAULT_ENGINE,
   DEFAULT_MODEL,
 } from "@/components/ModelPicker";
 import { Banner } from "@/components/Banner";
@@ -207,7 +209,7 @@ export function ChatThread({
   send?: (
     message: string,
     sessionId: string | undefined,
-    opts?: { model?: string; effort?: AgentEffort }
+    opts?: { model?: string; effort?: AgentEffort; engine?: AgentEngineId }
   ) => Promise<{ sessionId: string }>;
   /** Câu gợi ý lúc chưa có tin nhắn nào - mặc định là câu chung của chat */
   emptyText?: string;
@@ -232,9 +234,10 @@ export function ChatThread({
   const [agentError, setAgentError] = useState<string | null>(null);
   // Trạng thái phiên đang xem - khởi tạo từ DB, cập nhật sống theo SSE
   const [status, setStatus] = useState<ChatSessionStatus | null>(null);
-  // Model/mode cho phiên MỚI (chỉ có tác dụng ở tin nhắn tạo session)
+  // Model/mode/engine cho phiên MỚI (chỉ có tác dụng ở tin nhắn tạo session)
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [effort, setEffort] = useState<AgentEffort>(DEFAULT_EFFORT);
+  const [engine, setEngine] = useState<AgentEngineId>(DEFAULT_ENGINE);
   const initialStatusRef = useRef(initialStatus);
   initialStatusRef.current = initialStatus;
   const sessionPropRef = useRef(session);
@@ -528,8 +531,15 @@ ${queued.text}` : queued.text));
     const runStartedBefore = sessionInfo?.runStartedAt ?? null;
     try {
       const current = activeIdRef.current;
-      // model/effort chỉ gửi khi TẠO session mới - session cũ giữ model đã lưu
-      const opts = !current && providersEnabled ? { model, effort } : undefined;
+      // model/effort/engine chỉ gửi khi TẠO session mới - session cũ giữ lựa chọn đã lưu
+      const opts =
+        !current && providersEnabled
+          ? {
+              model: engine !== "claude" && !model.trim() ? undefined : model,
+              effort: engine !== "claude" ? undefined : effort,
+              engine: engine !== "claude" ? engine : undefined,
+            }
+          : undefined;
       const res = send
         ? await send(message, current ?? undefined, opts)
         : await sendChat(
@@ -768,6 +778,8 @@ ${queued.text}` : queued.text));
           <AiModelInlineRow
             model={model}
             effort={effort}
+            engine={engine}
+            onEngineChange={setEngine}
             onModelChange={setModel}
             onEffortChange={setEffort}
           />

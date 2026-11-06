@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>AIEV Desktop</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: radial-gradient(1200px 700px at 20% -10%, #16233c 0%, #0a0e18 55%, #070a12 100%);
+      color: #e6edf3;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+    .wrap { text-align: center; max-width: 640px; padding: 32px; }
+    .logo {
+      width: 84px; height: 84px; margin: 0 auto 22px; border-radius: 20px;
+      background: linear-gradient(135deg, #2f81f7, #79c0ff);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 42px; box-shadow: 0 10px 40px rgba(31, 111, 235, 0.35);
+    }
+    h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+    .sub { color: #8b949e; font-size: 13px; margin-top: 6px; }
+    .spinner {
+      width: 34px; height: 34px; margin: 30px auto 18px;
+      border: 3px solid rgba(121, 192, 255, 0.18);
+      border-top-color: #58a6ff; border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #status { color: #a5b4c8; font-size: 14px; min-height: 20px; }
+    #hint { color: #556070; font-size: 11.5px; margin-top: 26px; line-height: 1.6; }
+    #err {
+      display: none; margin-top: 24px; text-align: left;
+      background: rgba(248, 81, 73, 0.09); border: 1px solid rgba(248, 81, 73, 0.35);
+      border-radius: 10px; padding: 16px 18px; font-size: 13.5px; line-height: 1.65;
+      color: #ffb0aa; white-space: pre-wrap; word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">🎬</div>
+    <h1>AIEV Desktop</h1>
+    <div class="sub">AI Edit Video by noti.vn</div>
+    <div class="spinner" id="spinner"></div>
+    <div id="status">Đang khởi động…</div>
+    <div id="err"></div>
+    <div id="hint">
+      Lần đầu chạy có thể mất vài phút (cài FFmpeg/Chrome, build web).<br />
+      Log chi tiết: <b>.aiev\logs</b> trong thư mục repo.
+    </div>
+  </div>
+  <script>
+    // Rust gọi eval() để cập nhật trạng thái; che spinner khi có lỗi.
+    window.__aievStatus = function (text) {
+      document.getElementById("status").textContent = text;
+    };
+    window.__aievError = function (text) {
+      var box = document.getElementById("err");
+      box.textContent = text;
+      box.style.display = "block";
+      document.getElementById("spinner").style.display = "none";
+    };
+    // Quay lại từ trạng thái lỗi (?err=<uri-encoded>) — Rust navigate về đây.
+    try {
+      var q = new URLSearchParams(location.search).get("err");
+      if (q) window.__aievError(decodeURIComponent(q));
+    } catch (e) {}
+  </script>
+</body>
+</html>

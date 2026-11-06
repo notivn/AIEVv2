@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { Router } from "express";
+import { KNOWN_ENGINES, engineStatuses, isKnownEngine } from "../agentEngines.js";
 import { hasClaudeAuth, repoRoot } from "../config.js";
 import { geminiApiKey } from "../gemini.js";
 import { HttpError } from "../util.js";
@@ -249,25 +250,49 @@ function isValidClaudeModel(id: string): boolean {
 }
 
 /**
- * Parse + validate `model`/`effort` từ body của POST /api/chat và POST /api/projects/:id/edit.
- * undefined = không gửi (giữ nguyên lựa chọn cũ của session / mặc định SDK).
+ * Parse + validate `engine`/`model`/`effort` từ body của POST /api/chat và
+ * POST /api/projects/:id/edit. undefined = không gửi (giữ nguyên lựa chọn cũ
+ * của session / mặc định SDK).
+ *
+ * engine != "claude" (CLI agent): model là free-form (mỗi CLI một hệ tên model),
+ * chỉ validate charset để chặn shell injection (CLI spawn với shell:true);
+ * effort bỏ qua vì CLI không nhận tham số này.
  */
 export function parseModelEffort(body: Record<string, unknown>): {
   model?: string;
   effort?: string;
+  engine?: string;
 } {
+  let engine: string | undefined;
+  if (typeof body.engine === "string" && body.engine.trim()) {
+    engine = body.engine.trim();
+    if (!isKnownEngine(engine)) {
+      throw new HttpError(
+        400,
+        "INVALID_ENGINE",
+        `engine phải là một trong: ${KNOWN_ENGINES.join(", ")}`,
+      );
+    }
+  }
+  const cliEngine = engine !== undefined && engine !== "claude";
   const out: { model?: string; effort?: string } = {};
   if ("model" in body && body.model !== undefined && body.model !== null && body.model !== "") {
-    if (typeof body.model !== "string" || !isValidClaudeModel(body.model)) {
+    if (cliEngine) {
+      if (typeof body.model !== "string" || !/^[\w.\/:-]{1,120}$/.test(body.model)) {
+        throw new HttpError(400, "INVALID_MODEL", "model không hợp lệ cho engine CLI");
+      }
+      out.model = body.model;
+    } else if (typeof body.model !== "string" || !isValidClaudeModel(body.model)) {
       throw new HttpError(
         400,
         "INVALID_MODEL",
         `model phải là một trong: ${CLAUDE_MODEL_IDS.join(", ")}`,
       );
+    } else {
+      out.model = body.model;
     }
-    out.model = body.model;
   }
-  if ("effort" in body && body.effort !== undefined && body.effort !== null && body.effort !== "") {
+  if (!cliEngine && "effort" in body && body.effort !== undefined && body.effort !== null && body.effort !== "") {
     if (typeof body.effort !== "string" || !EFFORT_LEVELS.includes(body.effort)) {
       throw new HttpError(
         400,
@@ -277,7 +302,7 @@ export function parseModelEffort(body: Record<string, unknown>): {
     }
     out.effort = body.effort;
   }
-  return out;
+  return engine !== undefined ? { ...out, engine } : out;
 }
 
 interface Provider {
@@ -316,8 +341,8 @@ function hasAntigravityInstall(): boolean {
 
 const router = Router();
 
-// GET /api/providers → { providers: Provider[] }
-router.get("/", (_req, res) => {
+// GET /api/providers → { providers: Provider[], engines: EngineStatus[] }
+router.get("/", async (_req, res) => {
   const claude: Provider = {
     id: "claude",
     label: "Claude (Anthropic)",
@@ -342,7 +367,10 @@ router.get("/", (_req, res) => {
       "Đã phát hiện Antigravity/gemini-cli - auth IDE không dùng được cho API tạo ảnh, cần GEMINI_API_KEY trong .env";
   }
 
-  res.json({ providers: [claude, gemini] });
+  // Engine điều khiển agent (claude SDK + CLI subscription) - kèm trạng thái cài đặt
+  const engines = await engineStatuses();
+
+  res.json({ providers: [claude, gemini], engines });
 });
 
 // GET /api/providers/gemini/image-models - danh sách model ảnh MỚI NHẤT (live từ Google, cache 1h)

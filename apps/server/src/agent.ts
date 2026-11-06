@@ -2,48 +2,35 @@ import fs from "node:fs";
 import path from "node:path";
 import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { hasClaudeAuth, paths, repoRoot } from "./config.js";
-import { agentEnv, checkAgentToolUse } from "./agentPolicy.js";
 import * as db from "./db.js";
 import { broadcast } from "./events.js";
 import { normOutput, readMeta } from "./meta.js";
 import { isQcReportStale, readQcReport } from "./qc.js";
 import { readRenderSettings } from "./renderSettings.js";
 import { agentRunStarted, agentRunFinished, timelineVersion } from "./timeline.js";
+import {
+  ENGINE_LABELS,
+  ensureEnginesDetected,
+  engineOfSession,
+  engineReady,
+  type AgentEngine,
+} from "./agentEngines.js";
+import { buildClaudeOptions, consumeClaudeTurn, isBuildGoal } from "./agentDrivers/claudeDriver.js";
+import { buildCliPrompt, interruptCli, runCliTurn } from "./agentDrivers/cliDriver.js";
 
 /**
- * Chạy Claude Code headless qua Claude Agent SDK (0.3.x).
- * Event đẩy qua SSE kênh `agent`:
+ * Chạy agent headless cho một phiên chat. Engine chọn theo cột `engine` của
+ * phiên (agentEngines.ts): "claude" = Claude Agent SDK (kiến trúc gốc), còn lại
+ * là agent CLI subscription (codex/gemini/opencode/custom — cliDriver).
+ * Event đẩy qua SSE kênh `agent` (cùng shape cho mọi engine):
  *   { sessionId, kind: "text"|"tool"|"result"|"error"|"done", text?, tool?, error? }
  */
 
-/** Query đang chạy theo sessionId - phục vụ interrupt */
-const running = new Map<string, Query>();
-
-/** Shape structural tối thiểu của message SDK - tránh gãy build khi type SDK đổi giữa các bản 0.3.x */
-interface AgentMessage {
-  type: string;
-  subtype?: string;
-  session_id?: string;
-  event?: {
-    type?: string;
-    delta?: { type?: string; text?: string };
-  };
-  message?: {
-    content?: Array<{ type?: string; name?: string; input?: unknown; text?: string }>;
-  };
-  result?: string;
-  /** Usage trên message result - tên field theo SDK 0.3.x, đọc phòng thủ */
-  total_cost_usd?: number;
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_read_input_tokens?: number;
-    cache_creation_input_tokens?: number;
-  };
-  input_tokens?: number;
-  output_tokens?: number;
-  [key: string]: unknown;
-}
+/**
+ * Thứ đang chạy theo sessionId - phục vụ interrupt. Claude: `Query` của SDK;
+ * CLI: handle kill tree. Chung 1 interface tối thiểu `{ interrupt() }`.
+ */
+const running = new Map<string, { interrupt(): Promise<unknown> }>();
 
 type AgentEventPayload = {
   sessionId: string;
@@ -121,24 +108,6 @@ export async function interruptAgent(sessionId: string): Promise<boolean> {
   return true;
 }
 
-/**
- * Tool agent được tự chạy KHÔNG cần hỏi. Pipeline video chạy hoàn toàn cục bộ
- * (ffmpeg/HyperFrames/Remotion) nên KHÔNG có WebFetch/WebSearch: prompt luôn
- * chứa nội dung do người dùng/asset cung cấp (brief, mô tả file, transcript) -
- * để cả Bash lẫn kênh ra mạng là mở đường rò rỉ .env/credentials nếu bị chèn
- * chỉ thị độc (prompt injection). Cần tra cứu web thì làm ở phiên riêng.
- */
-const ALLOWED_TOOLS = [
-  "Read",
-  "Write",
-  "Edit",
-  "Glob",
-  "Grep",
-  "Bash",
-  "TodoWrite",
-  "Skill",
-];
-
 /** Message gửi agent khi tự chạy tiếp một phiên bị gián đoạn (auto-resume) */
 const RESUME_MESSAGE =
   "Tiếp tục công việc đang dở dang. Kiểm tra trạng thái hiện tại của project (meta.json, renders/, log job) rồi làm tiếp từ chỗ dừng - KHÔNG làm lại từ đầu.";
@@ -166,15 +135,6 @@ function maxResumeAttemptsFor(session: Pick<db.ChatSessionRow, "goal">): number 
   return isBuildGoal(session.goal)
     ? readRenderSettings().aiMaxAttempts
     : MAX_RESUME_ATTEMPTS;
-}
-
-/**
- * Phiên DỰNG VIDEO (gate + cap Cấu hình): goal 'final' (làm trọn tới final) hoặc
- * 'draft' (brief.finishMode = "draft" - dừng ở bản draft đã QC, docs/EDITOR-V2-PLAN.md
- * mục 3). Hai loại cùng chạy pipeline dài, chỉ khác điểm dừng.
- */
-function isBuildGoal(goal: string | null | undefined): boolean {
-  return goal === "final" || goal === "draft";
 }
 
 /**
@@ -425,13 +385,24 @@ export async function runAgent(
   message: string,
   opts: { continueRun?: boolean } = {},
 ): Promise<void> {
-  if (!hasClaudeAuth()) {
-    emit({
-      sessionId,
-      kind: "error",
-      error:
-        "Chưa có xác thực Claude. Cách 1 (khuyên dùng): đăng nhập Claude Code trên máy này (VSCode extension hoặc chạy `claude` trong terminal rồi /login) - hệ thống tự dùng gói subscription. Cách 2: điền ANTHROPIC_API_KEY vào file .env rồi khởi động lại server.",
-    });
+  const existing = db.getChatSession(sessionId);
+  const engine: AgentEngine = engineOfSession(existing);
+
+  // Guard xác thực THEO ENGINE: claude = Claude auth (SDK); CLI = CLI đã cài trên máy
+  let engineError: string | null = null;
+  if (engine === "claude") {
+    if (!hasClaudeAuth()) {
+      engineError =
+        "Chưa có xác thực Claude. Cách 1 (khuyên dùng): đăng nhập Claude Code trên máy này (VSCode extension hoặc chạy `claude` trong terminal rồi /login) - hệ thống tự dùng gói subscription. Cách 2: điền ANTHROPIC_API_KEY vào file .env rồi khởi động lại server. Hoặc đổi sang engine khác (Codex/Gemini CLI...) ở tab Kết nối → Agent điều khiển.";
+    }
+  } else {
+    await ensureEnginesDetected();
+    if (!engineReady(engine)) {
+      engineError = `Chưa tìm thấy ${ENGINE_LABELS[engine]} trên máy — cài theo hướng dẫn ở tab Kết nối → "Agent điều khiển".`;
+    }
+  }
+  if (engineError) {
+    emit({ sessionId, kind: "error", error: engineError });
     // "done" phải kèm status rõ ràng: thiếu status thì web mặc định coi là
     // thành công, trong khi lượt này thất bại ngay từ guard
     emit({ sessionId, kind: "done", status: "error" });
@@ -444,7 +415,7 @@ export async function runAgent(
       kind: "error",
       error: "Agent đang chạy trong phiên này - chờ xong hoặc bấm dừng (interrupt) trước.",
     });
-    // Kèm status "error": done không status bị web mặc định thành thành công
+    // Kèm status "error": done không status bị web mặc định thành công
     emit({ sessionId, kind: "done", status: "error" });
     return;
   }
@@ -453,100 +424,63 @@ export async function runAgent(
   db.addChatMessage(sessionId, "user", "text", message);
   db.touchChatSession(sessionId);
 
-  const session = db.getChatSession(sessionId);
+  const session = db.getChatSession(sessionId) ?? existing;
   const sdkSessionId = session?.sdkSessionId ?? null;
 
   // Message mới của user = lượt chạy mới: runStartedAt=now, runFinishedAt=null, resumeAttempts=0.
   // Lượt auto-resume (continueRun) GIỮ NGUYÊN mốc bắt đầu - UI đo elapsed liền mạch.
   if (!opts.continueRun) db.startChatRun(sessionId);
 
-  // Message đầu của session mới: prepend CLAUDE.md (SDK không tự nạp CLAUDE.md)
+  // Prompt theo engine: claude dùng SDK memory (chỉ prepend CLAUDE.md đầu phiên);
+  // CLI engine stateless → mỗi lượt nhồi lại instructions + transcript rút gọn
   let prompt = message;
-  if (!sdkSessionId) {
+  if (engine === "claude") {
+    if (!sdkSessionId) {
+      try {
+        const claudeMd = fs.readFileSync(path.join(repoRoot, "CLAUDE.md"), "utf8");
+        prompt = `<project-instructions source="CLAUDE.md">\n${claudeMd}\n</project-instructions>\n\n${message}`;
+      } catch {
+        /* không có CLAUDE.md thì thôi */
+      }
+    }
+  } else {
+    prompt = buildCliPrompt(session, message);
+  }
+
+  let q: Query | null = null;
+  if (engine === "claude") {
+    const options = buildClaudeOptions(session, sdkSessionId, sessionId);
     try {
-      const claudeMd = fs.readFileSync(path.join(repoRoot, "CLAUDE.md"), "utf8");
-      prompt = `<project-instructions source="CLAUDE.md">\n${claudeMd}\n</project-instructions>\n\n${message}`;
-    } catch {
-      /* không có CLAUDE.md thì thôi */
+      q = query({
+        prompt,
+        options: options as Parameters<typeof query>[0]["options"],
+      });
+    } catch (err) {
+      db.finishChatRun(sessionId);
+      // Lượt tự chạy lại của gate goal='final'/'draft' tới đây khi status đang là
+      // "running" (giữ trong lúc chờ) - không hạ xuống thì phiên kẹt "running" mãi
+      // (không còn query lẫn timer nào, interrupt cũng không gỡ được)
+      db.setChatSessionStatus(sessionId, "error");
+      emit({
+        sessionId,
+        kind: "error",
+        error: `Không khởi động được agent: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      // Kèm status "error": done không status bị web mặc định thành công
+      emit({ sessionId, kind: "done", status: "error" });
+      return;
     }
   }
 
-  // Options theo API bản 0.3.x - cast qua Parameters<> để không gãy khi type Options thay đổi nhẹ
-  const options: Record<string, unknown> = {
-    cwd: repoRoot,
-    permissionMode: "acceptEdits",
-    allowedTools: ALLOWED_TOOLS,
-    includePartialMessages: true,
-    // Phiên edit goal='final' chạy pipeline dài (transcribe → scene → draft → verify → final)
-    // - 100 turn không đủ, lượt kết thúc với subtype != success giữa chừng
-    // Trần lượt của phiên dựng video lấy từ Cấu hình (đọc mỗi lần chạy nên đổi
-    // là ăn ngay). Phiên chat thường giữ 100 - nó ngắn, không phải chỗ tốn tiền.
-    // goal='draft' cùng pipeline (chỉ dừng sớm hơn) nên cùng trần.
-    maxTurns: isBuildGoal(session?.goal) ? readRenderSettings().aiMaxTurns : 100,
-    settingSources: ["project", "user"],
-    systemPrompt: { type: "preset", preset: "claude_code" },
-    // Không có kênh ra mạng nào ngoài API cục bộ - xem ALLOWED_TOOLS
-    disallowedTools: ["WebFetch", "WebSearch"],
-    // Gỡ khóa bí mật (Gemini, AIEV_API_TOKEN...) khỏi môi trường agent: `env`,
-    // `printenv`, `node -e process.env` trong Bash không còn gì để rò
-    env: agentEnv(),
-    // "Bash" trần trong allowedTools nghĩa là allowlist settings.json không giới
-    // hạn được lệnh nào - lớp chặn thật nằm ở agentPolicy.ts. Deny của hook thắng
-    // mọi luật allow; trả {} = không can thiệp, để luật quyền bình thường quyết.
-    hooks: {
-      PreToolUse: [
-        {
-          hooks: [
-            async (input: { hook_event_name?: string; tool_name?: string; tool_input?: unknown }) => {
-              if (input.hook_event_name !== "PreToolUse" || !input.tool_name) return {};
-              const toolInput =
-                input.tool_input && typeof input.tool_input === "object"
-                  ? (input.tool_input as Record<string, unknown>)
-                  : {};
-              const reason = checkAgentToolUse(input.tool_name, toolInput);
-              if (!reason) return {};
-              console.warn(`[agent-policy] chặn ${input.tool_name} (phiên ${sessionId}): ${reason}`);
-              return {
-                hookSpecificOutput: {
-                  hookEventName: "PreToolUse",
-                  permissionDecision: "deny",
-                  permissionDecisionReason: reason,
-                },
-              };
-            },
-          ],
-        },
-      ],
+  // CLI không có object Query — dùng handle interrupt = kill tree process
+  running.set(
+    sessionId,
+    q ?? {
+      interrupt: async () => {
+        interruptCli(sessionId);
+      },
     },
-  };
-  if (sdkSessionId) options.resume = sdkSessionId;
-  // Model/effort người dùng đã chọn cho phiên (docs/API.md mục AI Providers) - chỉ set khi có
-  if (session?.model) options.model = session.model;
-  if (session?.effort) options.effort = session.effort;
-
-  let q: Query;
-  try {
-    q = query({
-      prompt,
-      options: options as Parameters<typeof query>[0]["options"],
-    });
-  } catch (err) {
-    db.finishChatRun(sessionId);
-    // Lượt tự chạy lại của gate goal='final'/'draft' tới đây khi status đang là
-    // "running" (giữ trong lúc chờ) - không hạ xuống thì phiên kẹt "running" mãi
-    // (không còn query lẫn timer nào, interrupt cũng không gỡ được)
-    db.setChatSessionStatus(sessionId, "error");
-    emit({
-      sessionId,
-      kind: "error",
-      error: `Không khởi động được agent: ${err instanceof Error ? err.message : String(err)}`,
-    });
-    // Kèm status "error": done không status bị web mặc định thành thành công
-    emit({ sessionId, kind: "done", status: "error" });
-    return;
-  }
-
-  running.set(sessionId, q);
+  );
   interruptedSessions.delete(sessionId);
   db.setChatSessionStatus(sessionId, "running");
 
@@ -571,75 +505,53 @@ export async function runAgent(
   let resultSaved = false;
   let hadError = false;
 
+  // Hooks chung cho cả 2 engine — cùng shape SSE, UI không phân biệt engine
+  const turnHooks = {
+    onText: (t: string) => {
+      textBuffer += t;
+      emit({ sessionId, kind: "text", text: t });
+    },
+    onTool: (tool: { name: string; input: unknown }) => {
+      emit({ sessionId, kind: "tool", tool });
+      db.addChatMessage(sessionId, "assistant", "tool", JSON.stringify(tool));
+    },
+    onError: (error: string) => emit({ sessionId, kind: "error", error }),
+  };
+
   try {
-    for await (const raw of q) {
-      const msg = raw as unknown as AgentMessage;
-
-      if (msg.type === "system" && msg.subtype === "init") {
-        // Lưu sdkSessionId để lần sau resume đúng phiên Claude Code
-        if (typeof msg.session_id === "string" && msg.session_id) {
-          db.setSdkSessionId(sessionId, msg.session_id);
-        }
-        continue;
+    if (q) {
+      // Engine Claude: tiêu thụ stream của SDK (usage/cost được ghi bên trong)
+      const outcome = await consumeClaudeTurn(sessionId, session?.projectId ?? null, q, turnHooks);
+      if (outcome.text && !outcome.saved) {
+        // Lỗi giữa chừng: giữ lại phần text đã stream để không mất lịch sử
+        db.addChatMessage(sessionId, "assistant", "text", outcome.text);
       }
-
-      if (msg.type === "stream_event") {
-        const ev = msg.event;
-        if (
-          ev?.type === "content_block_delta" &&
-          ev.delta?.type === "text_delta" &&
-          typeof ev.delta.text === "string"
-        ) {
-          textBuffer += ev.delta.text;
-          emit({ sessionId, kind: "text", text: ev.delta.text });
-        }
-        continue;
+      if (outcome.threw) {
+        hadError = true;
+        emit({ sessionId, kind: "error", error: outcome.threw });
+      } else {
+        emit({ sessionId, kind: "result", text: outcome.text });
       }
-
-      if (msg.type === "assistant") {
-        const content = msg.message?.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block?.type === "tool_use") {
-              const tool = { name: String(block.name ?? "unknown"), input: block.input ?? {} };
-              emit({ sessionId, kind: "tool", tool });
-              db.addChatMessage(sessionId, "assistant", "tool", JSON.stringify(tool));
-            }
-          }
-        }
-        continue;
+      if (outcome.hadError) hadError = true;
+    } else if (engine !== "claude") {
+      // Engine CLI: spawn headless trong repo root, stream stdout → cùng shape SSE
+      const turn = await runCliTurn({
+        sessionId,
+        engine,
+        model: session?.model ?? null,
+        prompt,
+        hooks: { ...turnHooks, isInterrupted: () => interruptedSessions.has(sessionId) },
+      });
+      if (turn.error === "INTERRUPTED") {
+        // interruptedSessions đã có từ interruptAgent → finally đánh "interrupted"
+      } else if (!turn.ok) {
+        hadError = true;
+        if (turn.error) emit({ sessionId, kind: "error", error: turn.error });
       }
-
-      if (msg.type === "result") {
-        // Ghi nhận token đã dùng cho lượt chạy này (gắn theo project của session)
-        try {
-          const inTok =
-            (msg.usage?.input_tokens ?? msg.input_tokens ?? 0) +
-            (msg.usage?.cache_creation_input_tokens ?? 0) +
-            (msg.usage?.cache_read_input_tokens ?? 0);
-          const outTok = msg.usage?.output_tokens ?? msg.output_tokens ?? 0;
-          const cost = typeof msg.total_cost_usd === "number" ? msg.total_cost_usd : 0;
-          if (inTok > 0 || outTok > 0 || cost > 0) {
-            db.addTokenUsage(sessionId, session?.projectId ?? null, inTok, outTok, cost);
-          }
-        } catch {
-          /* usage là phụ - không để hỏng luồng chính */
-        }
-        const finalText =
-          typeof msg.result === "string" && msg.result.length > 0 ? msg.result : textBuffer;
-        if (msg.subtype && msg.subtype !== "success") {
-          hadError = true;
-          emit({
-            sessionId,
-            kind: "error",
-            error: `Agent kết thúc bất thường (${msg.subtype})`,
-          });
-        }
-        if (finalText) {
-          db.addChatMessage(sessionId, "assistant", "text", finalText);
-          resultSaved = true;
-        }
-        emit({ sessionId, kind: "result", text: finalText });
+      if (turn.ok && turn.text) {
+        db.addChatMessage(sessionId, "assistant", "text", turn.text);
+        resultSaved = true;
+        emit({ sessionId, kind: "result", text: turn.text });
       }
     }
   } catch (err) {
@@ -681,7 +593,7 @@ export async function runAgent(
       // Có tiến bộ từ lượt trước (job done tăng / renders đổi / output xuất hiện) → reset đếm
       const attempts = s ? refreshResumeProgress(s) : 0;
       const cap = s ? maxResumeAttemptsFor(s) : MAX_RESUME_ATTEMPTS;
-      const canRetry = s !== undefined && s.autoResume !== 0 && attempts < cap && hasClaudeAuth();
+      const canRetry = s !== undefined && s.autoResume !== 0 && attempts < cap && engineReady(engine);
       if (canRetry) {
         db.setChatSessionStatus(sessionId, "running");
         db.bumpResumeAttempts(sessionId);
@@ -721,7 +633,7 @@ export async function runAgent(
     db.setChatSessionStatus(sessionId, status);
 
     // Auto-resume: chỉ khi lỗi KHÔNG do user bấm dừng, autoResume còn bật (đọc tươi -
-    // user có thể vừa toggle), chưa quá số lượt, và còn xác thực Claude.
+    // user có thể vừa toggle), chưa quá số lượt, và engine của phiên còn sẵn sàng.
     const fresh = db.getChatSession(sessionId);
     // Tiến bộ giữa hai lượt (job done tăng / renders đổi / output xuất hiện) → reset đếm về 0
     const freshAttempts = fresh ? refreshResumeProgress(fresh) : 0;
@@ -731,7 +643,7 @@ export async function runAgent(
       fresh !== undefined &&
       fresh.autoResume !== 0 &&
       freshAttempts < maxResumeAttemptsFor(fresh) &&
-      hasClaudeAuth();
+      engineReady(engine);
 
     if (shouldResume) {
       db.bumpResumeAttempts(sessionId);
@@ -758,11 +670,14 @@ export async function runAgent(
  * index.ts gọi ~15s sau khi server listen. Tuần tự cách nhau 2s để không dồn cùng lúc.
  */
 export async function autoResumeStartup(): Promise<void> {
-  if (!hasClaudeAuth()) return;
   for (const id of db.startupInterruptedSessions) {
     const session = db.getChatSession(id);
     if (!session || session.status !== "interrupted" || session.autoResume === 0) continue;
     if (isAgentRunning(id)) continue;
+    // Guard theo engine của phiên: claude thiếu auth / CLI chưa cài thì bỏ qua
+    // (engineReady dựa cache detect - chưa detect thì lạc quan, runAgent sẽ guard lại)
+    const engine = engineOfSession(session);
+    if (engine === "claude" ? !hasClaudeAuth() : !engineReady(engine)) continue;
     // KHÔNG truyền continueRun - lượt mới sau restart, mốc thời gian mới
     void runAgent(id, RESUME_MESSAGE);
     await new Promise((resolve) => setTimeout(resolve, 2_000));

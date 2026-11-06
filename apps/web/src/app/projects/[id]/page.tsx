@@ -78,6 +78,7 @@ import {
   updateBrief,
   updateProjectTags,
   type AgentEffort,
+  type AgentEngineId,
   type Brief,
   type ChatSession,
   type FileInfo,
@@ -103,6 +104,7 @@ import { ConfirmDeleteModal } from "@/components/ConfirmDeleteModal";
 import {
   AiModelBlock,
   DEFAULT_EFFORT,
+  DEFAULT_ENGINE,
   DEFAULT_MODEL,
 } from "@/components/ModelPicker";
 import { EditableTitle } from "@/components/EditableTitle";
@@ -539,9 +541,10 @@ export default function ProjectDetailPage() {
   // Modal "Bắt đầu edit bằng AI"
   const [editOpen, setEditOpen] = useState(false);
   const [extraNotes, setExtraNotes] = useState("");
-  // Model + mode cho phiên edit - giữ lựa chọn giữa các lần mở modal
+  // Model + mode + engine cho phiên edit - giữ lựa chọn giữa các lần mở modal
   const [editModel, setEditModel] = useState(DEFAULT_MODEL);
   const [editEffort, setEditEffort] = useState<AgentEffort>(DEFAULT_EFFORT);
+  const [editEngine, setEditEngine] = useState<AgentEngineId>(DEFAULT_ENGINE);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -917,8 +920,9 @@ export default function ProjectDetailPage() {
         return;
       }
       const { sessionId } = await startProjectEdit(projectId, extraNotes, {
-        model: editModel,
-        effort: editEffort,
+        model: editEngine !== "claude" && !editModel.trim() ? undefined : editModel,
+        effort: editEngine !== "claude" ? undefined : editEffort,
+        engine: editEngine !== "claude" ? editEngine : undefined,
       });
       // Không rời trang - phiên vừa tạo hiện ngay ở panel AI, log stream tại chỗ
       setEditOpen(false);
@@ -2096,6 +2100,8 @@ export default function ProjectDetailPage() {
         <AiModelBlock
           model={editModel}
           effort={editEffort}
+          engine={editEngine}
+          onEngineChange={setEditEngine}
           onModelChange={setEditModel}
           onEffortChange={setEditEffort}
           disabled={starting}

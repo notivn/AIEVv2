@@ -1,0 +1,12 @@
+{
+  "name": "aiev-desktop-shell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vỏ Tauri cho AIEVv2 — chỉ chứa Rust shell + trang loading, UI thật là AIEVv2 chạy ở localhost:6868",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

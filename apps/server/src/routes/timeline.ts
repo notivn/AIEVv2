@@ -493,7 +493,7 @@ router.post("/:id/editor/chat", (req, res) => {
   const body = (req.body ?? {}) as Obj;
   const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message) throw new HttpError(400, "MESSAGE_REQUIRED", "Thiếu message");
-  const { model, effort } = parseModelEffort(body); // 400 nếu không hợp lệ
+  const { model, effort, engine } = parseModelEffort(body); // 400 nếu không hợp lệ
 
   let existing: db.ChatSessionRow | undefined;
   if (body.sessionId !== undefined && body.sessionId !== null && body.sessionId !== "") {
@@ -531,6 +531,7 @@ router.post("/:id/editor/chat", (req, res) => {
   if (existing) {
     sessionId = existing.sessionId;
     db.setChatSessionModelEffort(sessionId, model, effort);
+    if (engine) db.setChatSessionEngine(sessionId, engine);
   } else {
     sessionId = `sess_${nanoid()}`;
     // Title KHÔNG được bắt đầu bằng "Edit: " - db.ts backfill mọi phiên có title
@@ -542,6 +543,7 @@ router.post("/:id/editor/chat", (req, res) => {
       model ?? null,
       effort ?? null,
       null,
+      engine ?? null,
     );
     // Phiên chat của editor: TẮT tự chạy tiếp (cột mặc định là 1). Người dùng
     // đang ngồi trước trình chỉnh sửa và hỏi từng việc - lượt hỏng mà tự chạy
@@ -612,7 +614,7 @@ router.post("/:id/editor/handoff", (req, res) => {
   // Mặc định "draft" (KHÔNG theo brief): người dùng đang ngồi giám sát trong
   // trình chỉnh sửa, AI làm xong thì quay lại cho họ duyệt
   const finishMode = rawMode === "final" ? "final" : "draft";
-  const { model, effort } = parseModelEffort(body); // 400 nếu không hợp lệ
+  const { model, effort, engine } = parseModelEffort(body); // 400 nếu không hợp lệ
 
   // Một project một agent: hai phiên cùng sửa meta.json là ghi đè lẫn nhau
   if (db.listChatSessions(id).some((s) => isAgentBusy(s.sessionId))) {
@@ -643,6 +645,7 @@ router.post("/:id/editor/handoff", (req, res) => {
     meta,
     model,
     effort,
+    engine,
     finishMode,
     handoffInstruction: instruction,
   });

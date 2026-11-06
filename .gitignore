@@ -130,3 +130,7 @@ __pycache__/
 *.py[cod]
 /gateways/chatgpt/data/
 /gateways/chatgpt/config.json
+
+# Desktop shell (Tauri) — build artifacts
+desktop/src-tauri/target/
+desktop/src-tauri/gen/

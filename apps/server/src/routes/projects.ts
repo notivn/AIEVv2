@@ -483,6 +483,8 @@ export function openProjectEditSession(input: {
   extraNotes?: string;
   model?: string | null;
   effort?: string | null;
+  /** Engine điều khiển agent (agentEngines.ts) - thiếu = "claude" */
+  engine?: string | null;
   /** Thiếu = brief.finishMode của project (mặc định "draft") */
   finishMode?: FinishMode;
   /** Có mặt = phiên bàn giao từ trình chỉnh sửa (POST /editor/handoff) */
@@ -509,6 +511,7 @@ export function openProjectEditSession(input: {
     input.model ?? null,
     input.effort ?? null,
     finishMode,
+    input.engine ?? null,
   );
   return { sessionId, prompt, finishMode };
 }
@@ -523,7 +526,7 @@ router.post("/:id/edit", (req, res) => {
     throw new HttpError(400, "INVALID_EXTRA_NOTES", "extraNotes phải là string");
   }
   const extraNotes = typeof body.extraNotes === "string" ? body.extraNotes.trim() : "";
-  const { model, effort } = parseModelEffort(body); // 400 nếu không hợp lệ
+  const { model, effort, engine } = parseModelEffort(body); // 400 nếu không hợp lệ
 
   // Nguồn "Yêu cầu" / "Link bài viết" mà để trống: agent không có gì để dựng
   const brief = briefOf(meta);
@@ -549,7 +552,7 @@ router.post("/:id/edit", (req, res) => {
 
   // Soạn prompt (brief + assets + sfx/nhạc + Style Design) và mở phiên theo
   // brief.finishMode: "draft" (mặc định) → goal 'draft', "final" → goal 'final'
-  const { sessionId, prompt } = openProjectEditSession({ id, meta, extraNotes, model, effort });
+  const { sessionId, prompt } = openProjectEditSession({ id, meta, extraNotes, model, effort, engine });
 
   // Trả 202 NGAY, agent chạy nền - cùng pipeline với /api/chat (SSE kênh `agent`,
   // message đầu session được agent.ts tự prepend CLAUDE.md)

@@ -30,7 +30,7 @@ router.get("/", async (_req, res) => {
   });
 });
 
-type SettingKind = "number" | "boolean" | "nullableNumber" | "updateChannel";
+type SettingKind = "number" | "boolean" | "nullableNumber" | "updateChannel" | "string";
 
 /**
  * Kiểu dữ liệu của TỪNG cài đặt, dùng để lọc body của PUT.
@@ -55,6 +55,7 @@ const SETTING_KINDS: Record<keyof RenderSettings, SettingKind> = {
   updateChannel: "updateChannel",
   aiMaxAttempts: "number",
   aiMaxTurns: "number",
+  aiCustomCliCommand: "string",
 };
 
 const KIND_LABEL: Record<SettingKind, string> = {
@@ -62,6 +63,7 @@ const KIND_LABEL: Record<SettingKind, string> = {
   boolean: "phải là boolean",
   nullableNumber: "phải là số hoặc null",
   updateChannel: `phải là một trong ${UPDATE_CHANNELS.join(", ")}`,
+  string: "phải là chuỗi",
 };
 
 function isValid(kind: SettingKind, v: unknown): boolean {
@@ -74,6 +76,8 @@ function isValid(kind: SettingKind, v: unknown): boolean {
       return v === null || (typeof v === "number" && Number.isFinite(v));
     case "updateChannel":
       return UPDATE_CHANNELS.includes(v as UpdateChannel);
+    case "string":
+      return typeof v === "string";
   }
 }
 

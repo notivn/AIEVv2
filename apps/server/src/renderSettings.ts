@@ -64,6 +64,13 @@ export interface RenderSettings {
    * chạy mãi: phiên đắt nhất trong lịch sử ngốn 92 triệu token vào.
    */
   aiMaxTurns: number;
+  /**
+   * Lệnh CLI tùy chỉnh cho engine "custom" (agentEngines.ts) — template BẮT
+   * BUỘC chứa {prompt_file}: prompt ghi ra file tạm rồi thay vào placeholder
+   * (vd: agy run --prompt-file {prompt_file}). Chỉ điền lệnh của chính bạn —
+   * lệnh chạy qua shell với toàn quyền process.
+   */
+  aiCustomCliCommand: string;
 }
 
 /** Kênh cập nhật - xem RenderSettings.updateChannel */
@@ -96,6 +103,7 @@ export const DEFAULT_RENDER_SETTINGS: RenderSettings = {
   // Giữ đúng 300 như hằng số cũ để bản cập nhật không đổi hành vi mặc định -
   // ai muốn siết thì tự hạ, và trang Cấu hình nói rõ hạ để làm gì.
   aiMaxTurns: 300,
+  aiCustomCliCommand: "",
 };
 
 /** Trần chọn được trên UI cho hai thiết lập AI - xem RenderSettings. */
@@ -135,6 +143,9 @@ function normalizeSettings(raw: Record<string, unknown>): RenderSettings {
   // nào cũng hỏng - siết quá tay còn tốn hơn vì phải làm lại.
   if (typeof raw.aiMaxTurns === "number") {
     base.aiMaxTurns = clamp(Math.round(raw.aiMaxTurns), 20, 300);
+  }
+  if (typeof raw.aiCustomCliCommand === "string") {
+    base.aiCustomCliCommand = raw.aiCustomCliCommand.trim().slice(0, 500);
   }
   return base;
 }

@@ -32,12 +32,12 @@ router.get("/:sessionId/messages", (req, res) => {
   res.json(db.listChatMessages(sessionId));
 });
 
-// POST /api/chat - { message, sessionId?, model?, effort? } → 202 { sessionId }, agent chạy async
+// POST /api/chat - { message, sessionId?, model?, effort?, engine? } → 202 { sessionId }, agent chạy async
 router.post("/", (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message) throw new HttpError(400, "MESSAGE_REQUIRED", "Thiếu message");
-  const { model, effort } = parseModelEffort(body); // 400 nếu không hợp lệ
+  const { model, effort, engine } = parseModelEffort(body); // 400 nếu không hợp lệ
 
   let sessionId: string;
   if (typeof body.sessionId === "string" && body.sessionId.trim()) {
@@ -45,14 +45,23 @@ router.post("/", (req, res) => {
     if (!db.getChatSession(sessionId)) {
       throw new HttpError(404, "SESSION_NOT_FOUND", `Không tìm thấy phiên chat "${sessionId}"`);
     }
-    // Đổi model/effort giữa chừng - lưu vào session, mọi lượt chạy sau dùng lựa chọn mới
+    // Đổi model/effort/engine giữa chừng - lưu vào session, mọi lượt chạy sau dùng lựa chọn mới
     db.setChatSessionModelEffort(sessionId, model, effort);
+    if (engine) db.setChatSessionEngine(sessionId, engine);
   } else {
     sessionId = `sess_${nanoid()}`;
     const projectId =
       typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : null;
     // Title = 60 ký tự đầu của message đầu tiên
-    db.createChatSession(sessionId, message.slice(0, 60), projectId, model ?? null, effort ?? null);
+    db.createChatSession(
+      sessionId,
+      message.slice(0, 60),
+      projectId,
+      model ?? null,
+      effort ?? null,
+      null,
+      engine ?? null,
+    );
   }
 
   // Trả 202 NGAY, agent chạy nền - event đẩy qua SSE kênh `agent`

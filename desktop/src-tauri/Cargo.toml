@@ -1,0 +1,15 @@
+[package]
+name = "aiev-desktop"
+version = "0.1.0"
+description = "AIEV Desktop — vỏ desktop cho AIEVv2 (spawn stack Next.js + Express, mở webview localhost:6868)"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+
+[[bin]]
+name = "aiev-desktop"
+path = "src/main.rs"

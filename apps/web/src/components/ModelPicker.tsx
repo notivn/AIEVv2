@@ -21,6 +21,8 @@ import {
   getClaudeModels,
   getProviders,
   type AgentEffort,
+  type AgentEngineId,
+  type EngineStatus,
   type Provider,
   type ProviderModel,
 } from "@/lib/api";
@@ -51,6 +53,22 @@ import { useT } from "@/lib/i18n";
 export const DEFAULT_MODEL = "claude-sonnet-5-5";
 export const DEFAULT_EFFORT: AgentEffort = "medium";
 
+/** Engine điều khiển agent mặc định - Agent SDK của Claude (kiến trúc gốc). */
+export const DEFAULT_ENGINE: AgentEngineId = "claude";
+
+/**
+ * Engine điều khiển agent: "claude" = Agent SDK (có memory phiên, usage/cost);
+ * còn lại = agent CLI subscription đã login trên máy (xem trang Kết nối →
+ * "Agent điều khiển"). Nhãn KHÔNG dịch qua i18n — tên sản phẩm.
+ */
+export const ENGINE_OPTIONS: Array<{ id: AgentEngineId; label: string }> = [
+  { id: "claude", label: "Claude Code" },
+  { id: "codex", label: "Codex CLI (ChatGPT)" },
+  { id: "gemini", label: "Gemini CLI" },
+  { id: "opencode", label: "OpenCode" },
+  { id: "custom", label: "CLI tùy chỉnh" },
+];
+
 export const EFFORT_OPTIONS: {
   value: AgentEffort;
   label: string;
@@ -77,6 +95,7 @@ const GEMINI_TOOLTIP = "model.gemini-tooltip";
 // một lần fetch mỗi phiên UI là đủ.
 let providersCache: Provider[] | null = null;
 let providersPromise: Promise<Provider[]> | null = null;
+let enginesCache: EngineStatus[] | null = null;
 
 /**
  * Bust cache providers - gọi sau khi đổi/xóa API key ở trang Kết nối để các
@@ -85,13 +104,16 @@ let providersPromise: Promise<Provider[]> | null = null;
 export function refreshProviders(): void {
   providersCache = null;
   providersPromise = null;
+  enginesCache = null;
 }
 
 export function useProviders(): {
   providers: Provider[] | null;
+  engines: EngineStatus[] | null;
   error: string | null;
 } {
   const [providers, setProviders] = useState<Provider[] | null>(providersCache);
+  const [engines, setEngines] = useState<EngineStatus[] | null>(enginesCache);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -100,12 +122,16 @@ export function useProviders(): {
     if (!providersPromise) {
       providersPromise = getProviders().then((r) => {
         providersCache = r.providers;
+        enginesCache = r.engines ?? null;
         return r.providers;
       });
     }
     providersPromise
       .then((list) => {
-        if (alive) setProviders(list);
+        if (alive) {
+          setProviders(list);
+          setEngines(enginesCache);
+        }
       })
       .catch((e) => {
         // fetch hỏng → cho phép thử lại ở lần mount sau
@@ -117,7 +143,7 @@ export function useProviders(): {
     };
   }, []);
 
-  return { providers, error };
+  return { providers, engines, error };
 }
 
 /**
@@ -149,23 +175,34 @@ interface PickerProps {
   effort: AgentEffort;
   onModelChange: (model: string) => void;
   onEffortChange: (effort: AgentEffort) => void;
+  /** Engine điều khiển agent - mặc định claude SDK (tương thích caller cũ) */
+  engine?: AgentEngineId;
+  onEngineChange?: (engine: AgentEngineId) => void;
   disabled?: boolean;
+}
+
+/** Option label có chú thích trạng thái cài đặt (từ GET /api/providers engines) */
+function engineOptionLabel(e: { id: AgentEngineId; label: string }, statuses: EngineStatus[] | null): string {
+  const s = statuses?.find((x) => x.id === e.id);
+  return s && !s.installed ? `${e.label} — chưa sẵn sàng` : e.label;
 }
 
 function claudeModels(claude: Provider | undefined) {
   return claude && claude.models.length > 0 ? claude.models : FALLBACK_MODELS;
 }
 
-/** Khối "AI thực hiện" trong modal Bắt đầu edit - model + mode + trạng thái kết nối. */
+/** Khối "AI thực hiện" trong modal Bắt đầu edit - engine + model + mode + trạng thái kết nối. */
 export function AiModelBlock({
   model,
   effort,
   onModelChange,
   onEffortChange,
+  engine = DEFAULT_ENGINE,
+  onEngineChange,
   disabled = false,
 }: PickerProps) {
   const { t } = useT();
-  const { providers } = useProviders();
+  const { providers, engines } = useProviders();
   const claude = providers?.find((p) => p.id === "claude");
   const gemini = providers?.find((p) => p.id === "gemini");
   const { models: liveModels, load: loadClaudeModels } = useClaudeModels();
@@ -173,6 +210,7 @@ export function AiModelBlock({
   const models = liveModels ?? claudeModels(claude);
   // Model đã lưu không (chưa) nằm trong danh sách → vẫn hiển thị bằng id thô
   const modelMissing = model !== "" && !models.some((m) => m.id === model);
+  const cliEngine = engine !== "claude";
 
   return (
     <Panel
@@ -181,7 +219,7 @@ export function AiModelBlock({
         // "Claude" phải đứng ngay trước huy hiệu: một mình chữ "Đã kết nối"
         // cạnh tiêu đề nhóm "AI thực hiện" thì không nói được là CÁI GÌ đang
         // kết nối. Bản cũ có chữ này, chuyển sang Panel thì rơi mất.
-        claude && (
+        claude && !cliEngine && (
           <span className="flex items-center gap-2">
             <span className="text-meta font-medium">Claude</span>
             {claude.connected ? (
@@ -200,45 +238,80 @@ export function AiModelBlock({
         )
       }
     >
-      {claude && !claude.connected && (
+      {claude && !claude.connected && !cliEngine && (
         <p className="flex items-start gap-2 text-sm font-medium text-[var(--danger)]">
           <AlertTriangle size={14} strokeWidth={2} className="mt-0.5 shrink-0" />
           {t("model.claude-warning")}
         </p>
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label={t("model.model")} htmlFor="ai-model">
-          <select
-            id="ai-model"
-            className="input"
-            value={model}
-            disabled={disabled}
-            onFocus={loadClaudeModels}
-            onChange={(e) => onModelChange(e.target.value)}
-          >
-            {modelMissing && <option value={model}>{model}</option>}
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label={t("model.effort")} htmlFor="ai-effort">
-          <select
-            id="ai-effort"
-            className="input"
-            value={effort}
-            disabled={disabled}
-            onChange={(e) => onEffortChange(e.target.value as AgentEffort)}
-          >
-            {EFFORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {t(o.label)} - {t(o.hint)}
-              </option>
-            ))}
-          </select>
-        </Field>
+        {onEngineChange && (
+          <Field label="Agent điều khiển" htmlFor="ai-engine">
+            <select
+              id="ai-engine"
+              className="input"
+              value={engine}
+              disabled={disabled}
+              onChange={(e) => onEngineChange(e.target.value as AgentEngineId)}
+            >
+              {ENGINE_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {engineOptionLabel(o, engines)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {cliEngine ? (
+          <Field label={t("model.model")} htmlFor="ai-model">
+            <input
+              id="ai-model"
+              className="input"
+              type="text"
+              value={model}
+              placeholder="model (tùy chọn — bỏ trống dùng mặc định của CLI)"
+              disabled={disabled}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => onModelChange(e.target.value)}
+            />
+          </Field>
+        ) : (
+          <Field label={t("model.model")} htmlFor="ai-model">
+            <select
+              id="ai-model"
+              className="input"
+              value={model}
+              disabled={disabled}
+              onFocus={loadClaudeModels}
+              onChange={(e) => onModelChange(e.target.value)}
+            >
+              {modelMissing && <option value={model}>{model}</option>}
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {!cliEngine && (
+          <Field label={t("model.effort")} htmlFor="ai-effort">
+            <select
+              id="ai-effort"
+              className="input"
+              value={effort}
+              disabled={disabled}
+              onChange={(e) => onEffortChange(e.target.value as AgentEffort)}
+            >
+              {EFFORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {t(o.label)} - {t(o.hint)}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
       </div>
       {/* GỢI Ý, KHÔNG PHẢI CƯỠNG CHẾ - model mặc định giữ nguyên, người dùng
           vẫn tự quyết. Đặt ngay dưới ô chọn vì đây đúng là lúc quyết định, chứ
@@ -273,16 +346,18 @@ export function AiModelBlock({
   );
 }
 
-/** Hàng chọn model/mode gọn - hiện trong ChatThread khi tạo phiên mới. */
+/** Hàng chọn engine/model/mode gọn - hiện trong ChatThread khi tạo phiên mới. */
 export function AiModelInlineRow({
   model,
   effort,
   onModelChange,
   onEffortChange,
+  engine = DEFAULT_ENGINE,
+  onEngineChange,
   disabled = false,
 }: PickerProps) {
   const { t } = useT();
-  const { providers } = useProviders();
+  const { providers, engines } = useProviders();
   const claude = providers?.find((p) => p.id === "claude");
   const gemini = providers?.find((p) => p.id === "gemini");
   const { models: liveModels, load: loadClaudeModels } = useClaudeModels();
@@ -290,39 +365,73 @@ export function AiModelInlineRow({
   const models = liveModels ?? claudeModels(claude);
   // Model đã lưu không (chưa) nằm trong danh sách → vẫn hiển thị bằng id thô
   const modelMissing = model !== "" && !models.some((m) => m.id === model);
+  const cliEngine = engine !== "claude";
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {/* `.input` chuẩn, chỉ ghi đè BỀ RỘNG (w-auto) để hai select nằm gọn trên
+      {/* Engine đứng TRƯỚC model: đổi engine là thay cả hệ model */}
+      {onEngineChange && (
+        <select
+          className="input w-auto"
+          aria-label="Agent điều khiển"
+          value={engine}
+          disabled={disabled}
+          onChange={(e) => onEngineChange(e.target.value as AgentEngineId)}
+        >
+          {ENGINE_OPTIONS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {engineOptionLabel(o, engines)}
+            </option>
+          ))}
+        </select>
+      )}
+      {/* `.input` chuẩn, chỉ ghi đè BỀ RỘNG (w-auto) để các select nằm gọn trên
           một hàng - chiều cao và cỡ chữ giữ nguyên như mọi ô nhập khác. */}
-      <select
-        className="input w-auto"
-        aria-label={t("model.aria-model")}
-        value={model}
-        disabled={disabled}
-        onFocus={loadClaudeModels}
-        onChange={(e) => onModelChange(e.target.value)}
-      >
-        {modelMissing && <option value={model}>{model}</option>}
-        {models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.label}
-          </option>
-        ))}
-      </select>
-      <select
-        className="input w-auto"
-        aria-label={t("model.aria-effort")}
-        value={effort}
-        disabled={disabled}
-        onChange={(e) => onEffortChange(e.target.value as AgentEffort)}
-      >
-        {EFFORT_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {t(o.label)}
-          </option>
-        ))}
-      </select>
+      {cliEngine ? (
+        // Engine CLI: model free-form (mỗi CLI một hệ tên) - bỏ trống = mặc định CLI
+        <input
+          className="input w-auto"
+          type="text"
+          aria-label={t("model.aria-model")}
+          value={model}
+          placeholder="model (tùy chọn)"
+          disabled={disabled}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => onModelChange(e.target.value)}
+        />
+      ) : (
+        <select
+          className="input w-auto"
+          aria-label={t("model.aria-model")}
+          value={model}
+          disabled={disabled}
+          onFocus={loadClaudeModels}
+          onChange={(e) => onModelChange(e.target.value)}
+        >
+          {modelMissing && <option value={model}>{model}</option>}
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      )}
+      {!cliEngine && (
+        <select
+          className="input w-auto"
+          aria-label={t("model.aria-effort")}
+          value={effort}
+          disabled={disabled}
+          onChange={(e) => onEffortChange(e.target.value as AgentEffort)}
+        >
+          {EFFORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {t(o.label)}
+            </option>
+          ))}
+        </select>
+      )}
       {claude && !claude.connected && (
         <span
           className="inline-flex items-center gap-1 text-meta font-medium text-[var(--danger)]"

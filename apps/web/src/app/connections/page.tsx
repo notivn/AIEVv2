@@ -76,6 +76,7 @@ import {
   GeminiWebCard,
   ImageProviderCard,
 } from "./GatewayCards";
+import { AgentEnginesCard } from "./AgentEnginesCard";
 import {
   CardIcon,
   Row,
@@ -806,6 +807,7 @@ export default function ConnectionsPage() {
         />
         <ImageProviderCard onError={report} reloadSignal={imageSignal} />
         <TunnelCard onError={report} />
+        <AgentEnginesCard onError={report} />
       </div>
 
       {connections && connections.length === 0 && (

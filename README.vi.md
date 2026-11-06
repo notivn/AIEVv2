@@ -60,6 +60,19 @@ Trang nào trên dashboard cũng có nút **Hướng dẫn** ở thanh trên cù
 
 `meta.json` của từng project là nguồn sự thật duy nhất - trình chỉnh sửa, AI và render queue đều đọc và ghi vào đó. Hợp đồng API đầy đủ: [`docs/API.md`](docs/API.md). Quy trình sản xuất + know-how: [`.claude/skills/`](.claude/skills/).
 
+## App desktop (Windows)
+
+Repo có sẵn vỏ Tauri 2 mỏng ở [`desktop/`](desktop/README.md): mở lên là tự kiểm tra môi trường, tự chạy bộ hệ thống thật (Express + Next.js) và mở dashboard trong cửa sổ native. Web app không đổi gì - `start.bat` vẫn chạy y như cũ. Đóng cửa sổ = ẩn vào khay hệ thống (render vẫn chạy); khay có Khởi động lại / Mở log / Thoát.
+
+Tự build (cần Rust + MSVC):
+
+```powershell
+npm install
+npm run desktop:build   # -> desktop/src-tauri/target/release/bundle/nsis/
+```
+
+Claude là engine mặc định. Agent CLI nào bạn đã login trên máy cũng điều khiển được hệ thống - Codex CLI (ChatGPT), Gemini CLI, OpenCode, hoặc lệnh tùy chỉnh. Xem [docs/AGENT-ENGINES.md](docs/AGENT-ENGINES.md) và card "Agent điều khiển" ở tab Kết nối.
+
 ## Yêu cầu
 
 - **Node.js 24 LTS** (hoặc 22.23.4+ / 26.12.1+ - bản vá bảo mật tháng 10/2026; HyperFrames yêu cầu `>=22`)

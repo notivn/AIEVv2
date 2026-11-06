@@ -106,6 +106,13 @@ try {
 } catch {
   /* cột đã tồn tại */
 }
+// Migration: engine điều khiển agent của phiên (agentEngines.ts) - "claude" = Agent SDK
+// (mặc định, bản cũ NULL cũng là claude); codex/gemini/opencode/custom = CLI agent subscription
+try {
+  db.exec("ALTER TABLE chat_sessions ADD COLUMN engine TEXT");
+} catch {
+  /* cột đã tồn tại */
+}
 // Backfill: các phiên edit tạo TRƯỚC khi có cột goal bị goal=NULL → gate final không bao giờ
 // chạy cho những phiên đó (kể cả khi user gửi tiếp message). Route /edit là nơi DUY NHẤT đặt
 // title "Edit: ..." kèm projectId → đánh lại goal='final' cho đúng ngữ nghĩa.
@@ -404,6 +411,11 @@ export interface ChatSessionRow {
   resumeAttempts: number;
   /** Mục tiêu phiên: "final" = phiên edit project, chỉ xong khi video final tồn tại; null = chat thường */
   goal: string | null;
+  /**
+   * Engine điều khiển agent của phiên (agentEngines.ts): "claude" = Agent SDK,
+   * codex/gemini/opencode/custom = agent CLI subscription. NULL (bản cũ) = claude.
+   */
+  engine: string | null;
   /** Bằng chứng tiến bộ của lượt chạy trước (agent.ts computeProgressMark) - so sánh để reset resumeAttempts */
   progressMark: string | null;
   createdAt: string;
@@ -600,12 +612,33 @@ export function createChatSession(
   model?: string | null,
   effort?: string | null,
   goal?: string | null,
+  engine?: string | null,
 ): ChatSessionRow {
   const now = nowIso();
   db.prepare(
-    "INSERT INTO chat_sessions (sessionId, title, projectId, model, effort, goal, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(sessionId, title, projectId ?? null, model ?? null, effort ?? null, goal ?? null, now, now);
+    "INSERT INTO chat_sessions (sessionId, title, projectId, model, effort, goal, engine, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    sessionId,
+    title,
+    projectId ?? null,
+    model ?? null,
+    effort ?? null,
+    goal ?? null,
+    engine ?? null,
+    now,
+    now,
+  );
   return getChatSession(sessionId)!;
+}
+
+/** Đổi engine giữa chừng phiên có sẵn (undefined = giữ nguyên) */
+export function setChatSessionEngine(sessionId: string, engine?: string): void {
+  if (engine === undefined) return;
+  db.prepare("UPDATE chat_sessions SET engine = ?, updatedAt = ? WHERE sessionId = ?").run(
+    engine,
+    nowIso(),
+    sessionId,
+  );
 }
 
 /** Cập nhật model/effort cho phiên có sẵn - chỉ ghi field được truyền (undefined = giữ nguyên) */
@@ -711,7 +744,7 @@ export function listChatSessions(
   projectId?: string,
 ): Array<Omit<ChatSessionRow, "sdkSessionId">> {
   const base =
-    "SELECT sessionId, title, projectId, status, model, effort, runStartedAt, runFinishedAt, " +
+    "SELECT sessionId, title, projectId, status, model, effort, engine, runStartedAt, runFinishedAt, " +
     "autoResume, resumeAttempts, goal, progressMark, createdAt, updatedAt FROM chat_sessions";
   if (projectId) {
     return db

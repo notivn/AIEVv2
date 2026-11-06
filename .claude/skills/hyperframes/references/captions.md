@@ -130,3 +130,7 @@ tl.seek(0);
 - One group visible at a time.
 - Every group must have a hard `tl.set` kill at `group.end`.
 - The compiler embeds supported fonts automatically - just declare `font-family` in CSS.
+# First cue at timeline zero
+
+When a caption starts at exactly 0, two `tl.set()` calls at 0 (hide then show) can leave it hidden after render seeking. Verified in the landscape smoke test: later cues rendered correctly while the first cue disappeared. Keep the initial hide, then reveal with a short tween at 0.001s, e.g. `tl.to('#c0', { opacity: 1, duration: 0.01 }, 0.001)`. Verify a rendered frame inside the first cue, not only later cues.
+

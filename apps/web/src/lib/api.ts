@@ -526,6 +526,19 @@ export interface Provider {
   models: ProviderModel[];
 }
 
+// ============ Engine điều khiển agent (Claude SDK + CLI subscription) ============
+
+export type AgentEngineId = "claude" | "codex" | "gemini" | "opencode" | "custom";
+
+/** Trạng thái một engine điều khiển agent - GET /api/providers (field engines). */
+export interface EngineStatus {
+  id: AgentEngineId;
+  label: string;
+  installed: boolean;
+  /** Hướng dẫn cài (tiếng Việt, server soạn) - null khi đã sẵn sàng. */
+  hint: string | null;
+}
+
 // ============ Kết nối (API key providers) ============
 
 /** Trạng thái API key của một provider - key đọc từ .env, đổi được qua UI. */
@@ -587,6 +600,11 @@ export interface RenderSettings {
    * (mặc định 300, server kẹp 20..300).
    */
   aiMaxTurns: number;
+  /**
+   * Lệnh CLI tùy chỉnh cho engine "custom" (agent điều khiển) — template bắt
+   * buộc chứa {prompt_file} (vd: agy run --prompt-file {prompt_file}).
+   */
+  aiCustomCliCommand: string;
 }
 
 /** Phần cứng máy backend phát hiện được - GET /api/render-settings. */
@@ -1314,7 +1332,7 @@ export const setAssetGrade = (
 export const startProjectEdit = (
   id: string,
   extraNotes?: string,
-  opts?: { model?: string; effort?: AgentEffort }
+  opts?: { model?: string; effort?: AgentEffort; engine?: AgentEngineId }
 ) =>
   post<{ sessionId: string }>(`/api/projects/${encodeURIComponent(id)}/edit`, {
     ...(extraNotes && extraNotes.trim()
@@ -1322,6 +1340,7 @@ export const startProjectEdit = (
       : {}),
     ...(opts?.model ? { model: opts.model } : {}),
     ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(opts?.engine ? { engine: opts.engine } : {}),
   });
 
 // ============ Jobs ============
@@ -1574,7 +1593,7 @@ export const sendChat = (
   message: string,
   sessionId?: string,
   projectId?: string,
-  opts?: { model?: string; effort?: AgentEffort }
+  opts?: { model?: string; effort?: AgentEffort; engine?: AgentEngineId }
 ) =>
   post<{ sessionId: string }>("/api/chat", {
     message,
@@ -1582,6 +1601,7 @@ export const sendChat = (
     projectId,
     ...(opts?.model ? { model: opts.model } : {}),
     ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(opts?.engine ? { engine: opts.engine } : {}),
   });
 
 export const interruptChat = (sessionId: string) =>
@@ -1598,7 +1618,7 @@ export const setChatAutoResume = (sessionId: string, enabled: boolean) =>
 // ============ AI Providers ============
 
 export const getProviders = () =>
-  request<{ providers: Provider[] }>("/api/providers");
+  request<{ providers: Provider[]; engines: EngineStatus[] }>("/api/providers");
 
 /** Kết quả GET /api/providers/gemini/image-models. */
 export interface GeminiImageModels {
@@ -4439,13 +4459,14 @@ export const sendEditorChat = (
   projectId: string,
   message: string,
   sessionId?: string,
-  opts?: { model?: string; effort?: AgentEffort }
+  opts?: { model?: string; effort?: AgentEffort; engine?: AgentEngineId }
 ) =>
   post<{ sessionId: string }>(`${projectPath(projectId)}/editor/chat`, {
     message,
     ...(sessionId ? { sessionId } : {}),
     ...(opts?.model ? { model: opts.model } : {}),
     ...(opts?.effort ? { effort: opts.effort } : {}),
+    ...(opts?.engine ? { engine: opts.engine } : {}),
   });
 
 /**
@@ -4540,7 +4561,13 @@ export const generateProjectText = (
  */
 export const startEditorHandoff = (
   projectId: string,
-  body: { instruction: string; finishMode?: "draft" | "final" }
+  body: {
+    instruction: string;
+    finishMode?: "draft" | "final";
+    /** Engine điều khiển agent (agentEngines) - thiếu = claude SDK */
+    engine?: AgentEngineId;
+    model?: string;
+  }
 ) =>
   post<{
     sessionId: string;

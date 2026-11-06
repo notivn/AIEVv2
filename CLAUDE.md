@@ -234,3 +234,19 @@ dựng/sửa video NGAY TRONG chat:
   có gate; phiên chat thường không gate.
 - Clip chưa có trong project: yêu cầu bấm nút "Tải clip" ở hàng trên của /chat
   (upload qua API đúng project), KHÔNG tự bịa đường dẫn asset.
+
+## Encoding tiếng Việt (BẮT BUỘC — lỗi hỏng dữ liệu đã gặp thật)
+
+Windows mặc định codepage 437/1258: tiếng Việt đưa qua **argv** của curl/PowerShell
+bị bóp thành U+FFFD và HỎNG VĨNH VIỄN trong meta.json/DB. Luật:
+
+1. Gửi JSON có tiếng Việt bằng curl: KHÔNG nhét vào `-d '...'` trên dòng lệnh.
+   Ghi body ra file tạm bằng tool Write (UTF-8) rồi:
+   `curl -s -X POST http://localhost:6869/api/... -H "Content-Type: application/json; charset=utf-8" --data-binary @.tmp-body.json`
+   — xong xóa file tạm.
+2. PowerShell phải đụng tiếng Việt: dòng đầu đặt
+   `[Console]::OutputEncoding = [Text.Encoding]::UTF8`; ghi file thì
+   `Set-Content -Encoding utf8`. Tốt nhất: đọc/ghi file bằng tool Read/Write/Edit
+   (UTF-8 sẵn) — đừng đi vòng qua shell.
+3. Thấy output có dấu `?` / `�` thay dấu tiếng Việt = dữ liệu ĐÃ HỎNG: đừng đoán
+   nghĩa, yêu cầu nguồn phát lại bằng UTF-8 (file hoặc stdout UTF-8).

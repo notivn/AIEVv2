@@ -100,6 +100,13 @@ export function agentEnv(): Record<string, string | undefined> {
   }
   // CLI tự gỡ khóa Anthropic/cloud khỏi môi trường của Bash, hook, MCP stdio
   env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = "1";
+  // Ép UTF-8 cho mọi tool con của agent (curl/python/git/PowerShell script):
+  // mặc định Windows dùng codepage 437/1258 — tiếng Việt qua argv/pipe vỡ thành
+  // U+FFFD và vành đai dữ liệu (meta.json, DB) dính lỗi vĩnh viễn. Đã gặp thật.
+  env.PYTHONUTF8 = "1";
+  env.PYTHONIOENCODING = "utf-8";
+  env.LANG = "en_US.UTF-8";
+  env.LC_ALL = "en_US.UTF-8";
   return env;
 }
 

@@ -3434,4 +3434,23 @@ export const en: Record<string, string> = {
   "tour.desc.skills": "Production know-how as markdown (Agent Skills standard) — the AI reads them before working; create new skills from a form.",
   "tour.desc.config": "Technical settings: GPU encoding (NVENC/QuickSync/VideoToolbox), AI retry caps, one-click doctor for FFmpeg/Chrome/whisper.",
   "tour.desc.connections": "The single place to manage AI: per-provider API keys + the Agent card to pick the engine (Claude/Codex/Gemini CLI/OpenCode/custom command).",
+
+  // /chat — chat-first surface
+  "nav.chat": "AI Chat",
+  "aichat.select-project": "Pick a project",
+  "aichat.no-project": "No project yet",
+  "aichat.new-project": "New project",
+  "aichat.project-name": "Project name",
+  "aichat.create": "Create",
+  "aichat.open-editor": "Editor",
+  "aichat.upload-clip": "Upload clip",
+  "aichat.drop-hint": "Drop a video here to upload it to the project",
+  "aichat.uploading": "Uploading…",
+  "aichat.uploaded": "Uploaded {name} — tweak the prompt and send to build",
+  "aichat.upload-failed": "Upload failed — try again",
+  "aichat.empty-hint": "Create a project and talk to the AI — building, karaoke, SFX… all through chat.",
+  "aichat.chip.draft": "Build a draft from the uploaded clip (stop at draft for my review)",
+  "aichat.chip.karaoke": "Add Vietnamese karaoke subtitles for the whole video",
+  "aichat.chip.sfx": "Add sound effects + background music with auto-duck",
+  "aichat.chip.shorts": "Cut the 3 best shorts from this video",
 };

@@ -220,3 +220,17 @@ gh release create v1.0.2 --title "v1.0.2" --target <sha-đầy-đủ> --notes-fi
 ```
 
 Đánh số theo `MAJOR.MINOR.PATCH`. Lỡ tag nhầm commit thì đừng dời tag cũ (người khác có thể đã kéo về), phát hành bản vá mới.
+
+## Giao diện Chat (/chat) — landing mặc định của app desktop
+
+Trang `/chat` là landing: người dùng chọn project ở selector trên đầu rồi nhắn
+thẳng trong khung chat (phiên goal=null gắn project). Khi người dùng yêu cầu
+dựng/sửa video NGAY TRONG chat:
+
+- Làm trực tiếp như luật chung: đọc `meta.json` trước mọi Edit, render chỉ qua
+  render queue (luật 2), báo tiến trình ngắn gọn.
+- Nếu họ muốn pipeline đầy đủ kèm gate (draft bắt buộc trước final, tự chạy lại
+  khi thiếu) — bảo họ bấm nút "Edit bằng AI" trên trang project, phiên đó mới
+  có gate; phiên chat thường không gate.
+- Clip chưa có trong project: yêu cầu bấm nút "Tải clip" ở hàng trên của /chat
+  (upload qua API đúng project), KHÔNG tự bịa đường dẫn asset.

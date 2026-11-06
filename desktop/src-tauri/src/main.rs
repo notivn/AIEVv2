@@ -350,8 +350,9 @@ fn show_error(app: &AppHandle, msg: &str) {
 
 fn navigate_to_app(app: &AppHandle) {
     // localhost (không phải 127.0.0.1) — WEB_ORIGINS của server chấp nhận cả
-    // hai, dùng localhost cho khớp link trong dashboard.
-    eval_js(app, "location.replace('http://localhost:6868')");
+    // hai, dùng localhost cho khớp link trong dashboard. Landing = /chat:
+    // mặt phẳng chat-first (chọn project → nhắn với AI), không phải dashboard.
+    eval_js(app, "location.replace('http://localhost:6868/chat')");
 }
 
 // ------------------------------------------------------------------ stack ---

@@ -3427,4 +3427,23 @@ export const vi: Record<string, string> = {
   "tour.desc.skills": "Kỹ năng sản xuất dạng markdown (chuẩn Agent Skills) — AI đọc trước khi làm; tạo skill mới bằng form, AI tự viết.",
   "tour.desc.config": "Cấu hình kỹ thuật: GPU encode (NVENC/QuickSync/VideoToolbox), trần lượt AI tự chạy, doctor 1 nút cài FFmpeg/Chrome/whisper.",
   "tour.desc.connections": "Nơi duy nhất quản lý AI: API key từng provider + card \"Agent điều khiển\" chọn engine (Claude/Codex/Gemini CLI/OpenCode/lệnh tùy chỉnh).",
+
+  // Trang /chat — mặt phẳng chat-first
+  "nav.chat": "Chat với AI",
+  "aichat.select-project": "Chọn project",
+  "aichat.no-project": "Chưa có project",
+  "aichat.new-project": "Project mới",
+  "aichat.project-name": "Tên project",
+  "aichat.create": "Tạo",
+  "aichat.open-editor": "Trình chỉnh sửa",
+  "aichat.upload-clip": "Tải clip",
+  "aichat.drop-hint": "Thả video vào đây để tải lên project",
+  "aichat.uploading": "Đang tải lên…",
+  "aichat.uploaded": "Đã tải {name} — chỉnh lời nhắn rồi Gửi để AI dựng",
+  "aichat.upload-failed": "Tải lên thất bại — thử lại",
+  "aichat.empty-hint": "Tạo project rồi nhắn với AI — dựng video, karaoke, SFX… tất cả qua hội thoại.",
+  "aichat.chip.draft": "Dựng bản draft từ clip đã tải (dừng ở draft để mình duyệt)",
+  "aichat.chip.karaoke": "Thêm phụ đề karaoke tiếng Việt cho cả video",
+  "aichat.chip.sfx": "Thêm sound effect + nhạc nền có auto-duck",
+  "aichat.chip.shorts": "Cắt 3 short hay nhất từ video này",
 };

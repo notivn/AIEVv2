@@ -128,6 +128,8 @@ function GithubMark({ size = 14 }: { size?: number }) {
 }
 
 const NAV = [
+  // /chat ĐỨNG ĐẦU: landing mặc định của app desktop — mọi việc qua hội thoại
+  { href: "/chat", label: "nav.chat", icon: MessageSquare },
   { href: "/", label: "nav.dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "nav.projects", icon: Clapperboard },
   { href: "/images", label: "nav.images", icon: Images },

@@ -9,11 +9,11 @@
     "test": "tsx --test src/duration.test.ts src/color.test.ts src/layerGeometry.test.ts"
   },
   "dependencies": {
-    "@remotion/cli": "4.0.538",
-    "@remotion/fonts": "4.0.538",
+    "@remotion/cli": "4.0.541",
+    "@remotion/fonts": "4.0.541",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "remotion": "4.0.538",
+    "remotion": "4.0.541",
     "zod": "^4.6.7"
   },
   "devDependencies": {

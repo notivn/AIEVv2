@@ -16,10 +16,10 @@
     "typecheck": "npm run typecheck -w apps/server && npm run typecheck -w apps/web && npm run typecheck -w engines/remotion"
   },
   "devDependencies": {
-    "concurrently": "^10.0.6"
+    "concurrently": "^10.0.7"
   },
   "dependencies": {
-    "hyperframes": "^0.8.197"
+    "hyperframes": "^0.9.23"
   },
   "engines": {
     "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
